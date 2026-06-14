@@ -63,8 +63,8 @@ const CONTACT_ASSIGN_ROLE = `
 `
 
 const CATALOG_CONTEXT_UPDATE = `
-  mutation catalogContextUpdate($id: ID!, $input: CatalogContextUpdateInput!) {
-    catalogContextUpdate(id: $id, input: $input) {
+  mutation catalogContextUpdate($catalogId: ID!, $contextsToAdd: CatalogContextInput) {
+    catalogContextUpdate(catalogId: $catalogId, contextsToAdd: $contextsToAdd) {
       catalog { id }
       userErrors { field message code }
     }
@@ -230,8 +230,8 @@ export async function GET(request: NextRequest) {
   if (B2B_CATALOG_ID) {
     try {
       await shopifyGraphQL(CATALOG_CONTEXT_UPDATE, {
-        id: B2B_CATALOG_ID,
-        input: { contextsToAdd: [{ companyLocationId }] },
+        catalogId: B2B_CATALOG_ID,
+        contextsToAdd: { companyLocationIds: [companyLocationId] },
       })
     } catch (err) {
       console.error('[approve] catalogContextUpdate error', err)
