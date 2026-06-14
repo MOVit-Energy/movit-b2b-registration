@@ -26,9 +26,37 @@ const COMPANY_CREATE = `
     companyCreate(input: $input) {
       company {
         id
-        mainContact { id }
         locations(first: 1) { nodes { id } }
+        contactRoles(first: 10) { nodes { id name } }
       }
+      userErrors { field message code }
+    }
+  }
+`
+
+// Přiřadí EXISTUJÍCÍHO customera jako kontakt firmy (nevytváří nového).
+const ASSIGN_CUSTOMER_AS_CONTACT = `
+  mutation companyAssignCustomerAsContact($companyId: ID!, $customerId: ID!) {
+    companyAssignCustomerAsContact(companyId: $companyId, customerId: $customerId) {
+      companyContact { id }
+      userErrors { field message code }
+    }
+  }
+`
+
+const ASSIGN_MAIN_CONTACT = `
+  mutation companyAssignMainContact($companyId: ID!, $companyContactId: ID!) {
+    companyAssignMainContact(companyId: $companyId, companyContactId: $companyContactId) {
+      company { id }
+      userErrors { field message code }
+    }
+  }
+`
+
+const CONTACT_ASSIGN_ROLE = `
+  mutation companyContactAssignRole($companyContactId: ID!, $companyContactRoleId: ID!, $companyLocationId: ID!) {
+    companyContactAssignRole(companyContactId: $companyContactId, companyContactRoleId: $companyContactRoleId, companyLocationId: $companyLocationId) {
+      companyContactRoleAssignment { id }
       userErrors { field message code }
     }
   }
@@ -108,14 +136,22 @@ export async function GET(request: NextRequest) {
   const addressCity = metafield(mf, 'address_city')
   const addressZip = metafield(mf, 'address_zip')
 
-  // Create Shopify B2B Company
+  // Create Shopify B2B Company (BEZ companyContact — kontakt přiřadíme zvlášť,
+  // protože customer s tímto emailem už existuje a companyContact by ho chtěl
+  // založit znovu → "Email address has already been taken").
   type CompanyCreateResult = {
     companyCreate: {
       company: {
         id: string
-        mainContact: { id: string }
         locations: { nodes: { id: string }[] }
+        contactRoles: { nodes: { id: string; name: string }[] }
       } | null
+      userErrors: { field: string[]; message: string; code: string }[]
+    }
+  }
+  type AssignContactResult = {
+    companyAssignCustomerAsContact: {
+      companyContact: { id: string } | null
       userErrors: { field: string[]; message: string; code: string }[]
     }
   }
@@ -128,12 +164,6 @@ export async function GET(request: NextRequest) {
           name: companyName,
           externalId: ico,
           note: `DIČ: ${dic || '—'} | Objem: ${expectedVolume}`,
-        },
-        companyContact: {
-          email: customer.email,
-          firstName: customer.firstName,
-          lastName: customer.lastName,
-          title: 'Hlavní kontakt',
         },
         companyLocation: {
           name: companyName,
@@ -160,7 +190,37 @@ export async function GET(request: NextRequest) {
       throw new Error(JSON.stringify(errors))
     }
 
-    companyLocationId = companyResult.companyCreate.company!.locations.nodes[0].id
+    const company = companyResult.companyCreate.company!
+    const companyId = company.id
+    companyLocationId = company.locations.nodes[0].id
+
+    // Přiřadíme existujícího customera jako kontakt firmy
+    const assignResult = await shopifyGraphQL<AssignContactResult>(ASSIGN_CUSTOMER_AS_CONTACT, {
+      companyId,
+      customerId: customer.id,
+    })
+    const assignErrors = assignResult.companyAssignCustomerAsContact.userErrors
+    if (assignErrors.length > 0) {
+      console.error('[approve] companyAssignCustomerAsContact errors', assignErrors)
+      throw new Error(JSON.stringify(assignErrors))
+    }
+    const companyContactId = assignResult.companyAssignCustomerAsContact.companyContact!.id
+
+    // Nastavíme ho jako hlavní kontakt firmy
+    await shopifyGraphQL(ASSIGN_MAIN_CONTACT, { companyId, companyContactId })
+
+    // Přidělíme roli na lokaci, aby mohl objednávat (preferujeme admin roli)
+    const roles = company.contactRoles.nodes
+    const role = roles.find(r => /admin/i.test(r.name)) ?? roles[0]
+    if (role) {
+      await shopifyGraphQL(CONTACT_ASSIGN_ROLE, {
+        companyContactId,
+        companyContactRoleId: role.id,
+        companyLocationId,
+      })
+    } else {
+      console.error('[approve] žádná company contact role k přiřazení')
+    }
   } catch (err) {
     console.error('[approve] companyCreate error', err)
     return htmlResponse('Chyba', 'Vytvoření firmy v Shopify selhalo. Zkuste to znovu nebo kontaktujte správce.', 'error')
