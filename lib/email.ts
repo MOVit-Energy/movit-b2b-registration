@@ -22,8 +22,26 @@ export interface ApplicationData {
   rejectLink: string
 }
 
+interface EmailPayload {
+  from: string
+  to: string
+  subject: string
+  html: string
+}
+
+async function sendEmail(payload: EmailPayload): Promise<void> {
+  console.log(
+    '[email] odesílám\n' +
+      `  from: ${payload.from}\n` +
+      `  to: ${payload.to}\n` +
+      `  subject: ${payload.subject}\n` +
+      `  html:\n${payload.html}`
+  )
+  await resend.emails.send(payload)
+}
+
 export async function sendAdminNotification(data: ApplicationData): Promise<void> {
-  await resend.emails.send({
+  await sendEmail({
     from: FROM,
     to: ADMIN,
     subject: `Nová B2B žádost: ${data.companyName} (${data.ico})`,
@@ -37,7 +55,7 @@ export async function sendWelcomeEmail(
   companyName: string,
   activationUrl: string
 ): Promise<void> {
-  await resend.emails.send({
+  await sendEmail({
     from: FROM,
     to,
     subject: 'Vaše B2B registrace u MOVit Energy byla schválena',
@@ -49,7 +67,7 @@ export async function sendRejectionEmail(
   to: string,
   firstName: string
 ): Promise<void> {
-  await resend.emails.send({
+  await sendEmail({
     from: FROM,
     to,
     subject: 'Vaše B2B žádost u MOVit Energy',

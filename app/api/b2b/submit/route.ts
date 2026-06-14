@@ -6,7 +6,8 @@ import { signToken } from '@/lib/token'
 import { sendAdminNotification } from '@/lib/email'
 import { checkRateLimit } from '@/lib/rateLimit'
 
-const SHOP_URL = process.env.SHOP_URL!
+// Veřejná URL této aplikace (kde běží /api/b2b/approve|reject), ne storefront.
+const APP_URL = process.env.APP_URL!
 
 const schema = z.object({
   ico: z.string().refine(validateIco, 'Neplatné IČO'),
@@ -179,8 +180,8 @@ export async function POST(request: NextRequest) {
 
   // Generate approval token and send admin email
   const token = signToken(customerId, d.email)
-  const approveLink = `${SHOP_URL}/api/b2b/approve?token=${encodeURIComponent(token)}`
-  const rejectLink = `${SHOP_URL}/api/b2b/reject?token=${encodeURIComponent(token)}`
+  const approveLink = `${APP_URL}/api/b2b/approve?token=${encodeURIComponent(token)}`
+  const rejectLink = `${APP_URL}/api/b2b/reject?token=${encodeURIComponent(token)}`
 
   try {
     await sendAdminNotification({
