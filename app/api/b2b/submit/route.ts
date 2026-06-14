@@ -43,6 +43,23 @@ const METAFIELDS_SET = `
   }
 `
 
+const CUSTOMER_BY_EMAIL = `
+  query customerByEmail($query: String!) {
+    customers(first: 1, query: $query) {
+      nodes { id tags }
+    }
+  }
+`
+
+const CUSTOMER_UPDATE = `
+  mutation customerUpdate($input: CustomerInput!) {
+    customerUpdate(input: $input) {
+      customer { id }
+      userErrors { field message }
+    }
+  }
+`
+
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
   if (!checkRateLimit(ip)) {
@@ -84,6 +101,9 @@ export async function POST(request: NextRequest) {
       userErrors: { field: string[]; message: string }[]
     }
   }
+  type CustomerByEmailResult = {
+    customers: { nodes: { id: string; tags: string[] }[] }
+  }
 
   let customerId: string
   try {
@@ -102,14 +122,36 @@ export async function POST(request: NextRequest) {
     if (errors.length > 0) {
       const emailTaken = errors.some(e => e.message.toLowerCase().includes('email'))
       if (emailTaken) {
-        return NextResponse.json({ error: 'Zákazník s tímto emailem již existuje' }, { status: 409 })
-      }
-      throw new Error(`customerCreate errors: ${JSON.stringify(errors)}`)
-    }
+        // Zákazník už existuje — nevytváříme nového, jen ho najdeme a níže
+        // doplníme/aktualizujeme custom fieldy (metafieldy).
+        const found = await shopifyGraphQL<CustomerByEmailResult>(CUSTOMER_BY_EMAIL, {
+          query: `email:${d.email}`,
+        })
+        const existing = found.customers.nodes[0]
+        if (!existing) {
+          throw new Error('Email obsazen, ale existující zákazník nenalezen')
+        }
+        customerId = existing.id
 
-    customerId = result.customerCreate.customer!.id
+        // Přidáme tag b2b-pending (zachováme stávající tagy).
+        const tags = Array.from(new Set([...existing.tags, 'b2b-pending']))
+        await shopifyGraphQL(CUSTOMER_UPDATE, {
+          input: {
+            id: customerId,
+            firstName: d.first_name,
+            lastName: d.last_name,
+            phone: d.phone,
+            tags,
+          },
+        })
+      } else {
+        throw new Error(`customerCreate errors: ${JSON.stringify(errors)}`)
+      }
+    } else {
+      customerId = result.customerCreate.customer!.id
+    }
   } catch (err) {
-    console.error('[submit] customerCreate error', err)
+    console.error('[submit] customerCreate/update error', err)
     return NextResponse.json({ error: 'Chyba při vytváření zákazníka' }, { status: 500 })
   }
 
