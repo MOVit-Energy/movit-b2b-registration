@@ -7,7 +7,8 @@ import { sendAdminNotification } from '@/lib/email'
 import { checkRateLimit } from '@/lib/rateLimit'
 
 // Veřejná URL této aplikace (kde běží /api/b2b/approve|reject), ne storefront.
-const APP_URL = process.env.APP_URL!
+// Ořežeme případné koncové lomítko, ať nevznikne "//api" ve schvalovacích odkazech.
+const APP_URL = process.env.APP_URL!.replace(/\/+$/, '')
 
 const schema = z.object({
   customer_id: z.string().regex(/^\d+$/, 'Neplatné customer ID'),

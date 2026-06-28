@@ -4,7 +4,7 @@ import { shopifyGraphQL } from '@/lib/shopify'
 import { sendWelcomeEmail } from '@/lib/email'
 
 const B2B_CATALOG_ID = process.env.B2B_CATALOG_ID!
-const SHOP_URL = process.env.SHOP_URL!
+const SHOP_URL = process.env.SHOP_URL!.replace(/\/+$/, '')
 
 // Company i kontakt (customer) už existují. Při approve jen přiřadíme existujícího
 // customera jako kontakt firmy a firmě přidělíme B2B katalog. Customera neupravujeme.
