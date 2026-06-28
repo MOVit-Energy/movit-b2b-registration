@@ -3,25 +3,14 @@ import { verifyToken } from '@/lib/token'
 import { shopifyGraphQL } from '@/lib/shopify'
 import { sendRejectionEmail } from '@/lib/email'
 
-const GET_CUSTOMER = `
-  query getCustomer($id: ID!) {
-    customer(id: $id) {
+const GET_COMPANY = `
+  query getCompany($id: ID!) {
+    company(id: $id) {
       id
-      email
-      firstName
-      tags
-      metafields(first: 5, namespace: "custom") {
+      name
+      metafields(first: 20, namespace: "custom") {
         nodes { key value }
       }
-    }
-  }
-`
-
-const CUSTOMER_UPDATE = `
-  mutation customerUpdate($input: CustomerInput!) {
-    customerUpdate(input: $input) {
-      customer { id tags }
-      userErrors { field message }
     }
   }
 `
@@ -35,14 +24,16 @@ const METAFIELDS_SET = `
   }
 `
 
-type CustomerData = {
-  customer: {
+type CompanyData = {
+  company: {
     id: string
-    email: string
-    firstName: string
-    tags: string[]
+    name: string
     metafields: { nodes: { key: string; value: string }[] }
   } | null
+}
+
+function metafield(nodes: { key: string; value: string }[], key: string): string {
+  return nodes.find(n => n.key === key)?.value ?? ''
 }
 
 export async function GET(request: NextRequest) {
@@ -53,48 +44,44 @@ export async function GET(request: NextRequest) {
     return htmlResponse('Neplatný token', 'Tento odkaz je neplatný nebo byl pozměněn.', 'error')
   }
 
-  const result = await shopifyGraphQL<CustomerData>(GET_CUSTOMER, { id: payload.customerId })
-  const customer = result.customer
+  const result = await shopifyGraphQL<CompanyData>(GET_COMPANY, { id: payload.companyId })
+  const company = result.company
 
-  if (!customer) {
-    return htmlResponse('Zákazník nenalezen', 'Zákazník s tímto tokenem neexistuje.', 'error')
+  if (!company) {
+    return htmlResponse('Firma nenalezena', 'Firma s tímto tokenem neexistuje.', 'error')
   }
 
-  const tokenUsed = customer.metafields.nodes.find(n => n.key === 'approval_token_used')?.value
-  if (tokenUsed === 'true') {
-    return htmlResponse('Token již použit', 'Tento schvalovací odkaz byl již použit.', 'warning')
+  const mf = company.metafields.nodes
+
+  if (metafield(mf, 'approval_token_used') === 'true') {
+    return htmlResponse('Odkaz již použit', 'Tento schvalovací odkaz byl již použit.', 'warning')
   }
 
-  // Mark token as used
+  const contactEmail = metafield(mf, 'contact_email') || payload.email
+  const contactFirstName = metafield(mf, 'contact_first_name')
+
+  // Označíme odkaz jako použitý + status zamítnuto. Firmu i customera necháváme
+  // beze změny (customera neupravujeme; firmu lze případně smazat ručně v adminu).
   try {
     await shopifyGraphQL(METAFIELDS_SET, {
       metafields: [
-        { ownerId: customer.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+        { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+        { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'rejected' },
       ],
     })
   } catch (err) {
     console.error('[reject] metafieldsSet error', err)
   }
 
-  // Update customer tags
-  const newTags = customer.tags.filter(t => t !== 'b2b-pending').concat('b2b-rejected')
+  // Rejection email (Klaviyo)
   try {
-    await shopifyGraphQL(CUSTOMER_UPDATE, {
-      input: { id: customer.id, tags: newTags },
-    })
-  } catch (err) {
-    console.error('[reject] customerUpdate error', err)
-  }
-
-  // Send rejection email
-  try {
-    await sendRejectionEmail(customer.email, customer.firstName)
+    await sendRejectionEmail(contactEmail, contactFirstName)
   } catch (err) {
     console.error('[reject] sendRejectionEmail error', err)
   }
 
-  console.log(`[reject] rejected customerId=${customer.id}`)
-  return htmlResponse('Zamítnuto', `Žádost zákazníka (${customer.email}) byla zamítnuta. Zákazník byl informován emailem.`, 'success')
+  console.log(`[reject] rejected companyId=${company.id}`)
+  return htmlResponse('Zamítnuto', `Žádost firmy ${company.name} (${contactEmail}) byla zamítnuta. Kontakt byl informován emailem.`, 'success')
 }
 
 function htmlResponse(title: string, message: string, type: 'success' | 'warning' | 'error'): NextResponse {

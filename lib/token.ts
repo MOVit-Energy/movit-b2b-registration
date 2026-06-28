@@ -3,12 +3,12 @@ import crypto from 'crypto'
 const SECRET = process.env.APPROVAL_TOKEN_SECRET!
 
 export interface TokenPayload {
-  customerId: string
+  companyId: string
   email: string
 }
 
-export function signToken(customerId: string, email: string): string {
-  const payload = Buffer.from(JSON.stringify({ customerId, email })).toString('base64url')
+export function signToken(companyId: string, email: string): string {
+  const payload = Buffer.from(JSON.stringify({ companyId, email })).toString('base64url')
   const sig = crypto.createHmac('sha256', SECRET).update(payload).digest('hex')
   return `${payload}.${sig}`
 }

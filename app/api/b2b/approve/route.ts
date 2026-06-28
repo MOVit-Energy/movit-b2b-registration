@@ -1,19 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/token'
-import { shopifyGraphQL, shopifyREST } from '@/lib/shopify'
+import { shopifyGraphQL } from '@/lib/shopify'
 import { sendWelcomeEmail } from '@/lib/email'
 
 const B2B_CATALOG_ID = process.env.B2B_CATALOG_ID!
+const SHOP_URL = process.env.SHOP_URL!
 
-const GET_CUSTOMER = `
-  query getCustomer($id: ID!) {
-    customer(id: $id) {
+// Company i kontakt (customer) už existují. Při approve jen přiřadíme existujícího
+// customera jako kontakt firmy a firmě přidělíme B2B katalog. Customera neupravujeme.
+const GET_COMPANY = `
+  query getCompany($id: ID!) {
+    company(id: $id) {
       id
-      email
-      firstName
-      lastName
-      phone
-      tags
+      name
+      locations(first: 1) { nodes { id } }
+      contactRoles(first: 10) { nodes { id name } }
       metafields(first: 20, namespace: "custom") {
         nodes { key value }
       }
@@ -21,20 +22,6 @@ const GET_CUSTOMER = `
   }
 `
 
-const COMPANY_CREATE = `
-  mutation companyCreate($input: CompanyCreateInput!) {
-    companyCreate(input: $input) {
-      company {
-        id
-        locations(first: 1) { nodes { id } }
-        contactRoles(first: 10) { nodes { id name } }
-      }
-      userErrors { field message code }
-    }
-  }
-`
-
-// Přiřadí EXISTUJÍCÍHO customera jako kontakt firmy (nevytváří nového).
 const ASSIGN_CUSTOMER_AS_CONTACT = `
   mutation companyAssignCustomerAsContact($companyId: ID!, $customerId: ID!) {
     companyAssignCustomerAsContact(companyId: $companyId, customerId: $customerId) {
@@ -71,15 +58,6 @@ const CATALOG_CONTEXT_UPDATE = `
   }
 `
 
-const CUSTOMER_UPDATE = `
-  mutation customerUpdate($input: CustomerInput!) {
-    customerUpdate(input: $input) {
-      customer { id tags }
-      userErrors { field message }
-    }
-  }
-`
-
 const METAFIELDS_SET = `
   mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
@@ -89,14 +67,12 @@ const METAFIELDS_SET = `
   }
 `
 
-type CustomerData = {
-  customer: {
+type CompanyData = {
+  company: {
     id: string
-    email: string
-    firstName: string
-    lastName: string
-    phone: string
-    tags: string[]
+    name: string
+    locations: { nodes: { id: string }[] }
+    contactRoles: { nodes: { id: string; name: string }[] }
     metafields: { nodes: { key: string; value: string }[] }
   } | null
 }
@@ -113,42 +89,35 @@ export async function GET(request: NextRequest) {
     return htmlResponse('Neplatný token', 'Tento odkaz je neplatný nebo byl pozměněn.', 'error')
   }
 
-  // Load customer
-  const result = await shopifyGraphQL<CustomerData>(GET_CUSTOMER, { id: payload.customerId })
-  const customer = result.customer
+  // Load company
+  const result = await shopifyGraphQL<CompanyData>(GET_COMPANY, { id: payload.companyId })
+  const company = result.company
 
-  if (!customer) {
-    return htmlResponse('Zákazník nenalezen', 'Zákazník s tímto tokenem neexistuje.', 'error')
+  if (!company) {
+    return htmlResponse('Firma nenalezena', 'Firma s tímto tokenem neexistuje.', 'error')
   }
 
-  const mf = customer.metafields.nodes
+  const mf = company.metafields.nodes
 
   // Check single-use
   if (metafield(mf, 'approval_token_used') === 'true') {
-    return htmlResponse('Token již použit', 'Tento schvalovací odkaz byl již použit.', 'warning')
+    return htmlResponse('Odkaz již použit', 'Tento schvalovací odkaz byl již použit.', 'warning')
   }
 
-  const companyName = metafield(mf, 'company_name') || customer.firstName + ' ' + customer.lastName
-  const ico = metafield(mf, 'ico')
-  const dic = metafield(mf, 'dic')
-  const expectedVolume = metafield(mf, 'expected_volume')
-  const addressStreet = metafield(mf, 'address_street')
-  const addressCity = metafield(mf, 'address_city')
-  const addressZip = metafield(mf, 'address_zip')
-
-  // Create Shopify B2B Company (BEZ companyContact — kontakt přiřadíme zvlášť,
-  // protože customer s tímto emailem už existuje a companyContact by ho chtěl
-  // založit znovu → "Email address has already been taken").
-  type CompanyCreateResult = {
-    companyCreate: {
-      company: {
-        id: string
-        locations: { nodes: { id: string }[] }
-        contactRoles: { nodes: { id: string; name: string }[] }
-      } | null
-      userErrors: { field: string[]; message: string; code: string }[]
-    }
+  const customerId = metafield(mf, 'customer')
+  if (!customerId) {
+    return htmlResponse('Chybí kontakt', 'K firmě není přiřazen žádný zákazník.', 'error')
   }
+
+  const contactEmail = metafield(mf, 'contact_email') || payload.email
+  const contactFirstName = metafield(mf, 'contact_first_name')
+  const companyLocationId = company.locations.nodes[0]?.id
+
+  if (!companyLocationId) {
+    return htmlResponse('Chyba', 'Firma nemá lokaci, nelze ji dokončit.', 'error')
+  }
+
+  // Přiřadíme existujícího customera jako kontakt firmy + roli + katalog.
   type AssignContactResult = {
     companyAssignCustomerAsContact: {
       companyContact: { id: string } | null
@@ -156,48 +125,10 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  let companyLocationId: string
   try {
-    const companyResult = await shopifyGraphQL<CompanyCreateResult>(COMPANY_CREATE, {
-      input: {
-        company: {
-          name: companyName,
-          externalId: ico,
-          note: `DIČ: ${dic || '—'} | Objem: ${expectedVolume}`,
-        },
-        companyLocation: {
-          name: companyName,
-          shippingAddress: {
-            firstName: customer.firstName,
-            lastName: customer.lastName,
-            address1: addressStreet,
-            city: addressCity,
-            zip: addressZip,
-            countryCode: 'CZ',
-          },
-          billingSameAsShipping: true,
-        },
-      },
-    })
-
-    const errors = companyResult.companyCreate.userErrors
-    if (errors.length > 0) {
-      console.error('[approve] companyCreate errors', errors)
-      const isDuplicate = errors.some(e => e.code === 'TAKEN' || e.message.toLowerCase().includes('external'))
-      if (isDuplicate) {
-        return htmlResponse('Firma již existuje', `Firma s IČO ${ico} je v Shopify již registrována.`, 'warning')
-      }
-      throw new Error(JSON.stringify(errors))
-    }
-
-    const company = companyResult.companyCreate.company!
-    const companyId = company.id
-    companyLocationId = company.locations.nodes[0].id
-
-    // Přiřadíme existujícího customera jako kontakt firmy
     const assignResult = await shopifyGraphQL<AssignContactResult>(ASSIGN_CUSTOMER_AS_CONTACT, {
-      companyId,
-      customerId: customer.id,
+      companyId: company.id,
+      customerId,
     })
     const assignErrors = assignResult.companyAssignCustomerAsContact.userErrors
     if (assignErrors.length > 0) {
@@ -206,10 +137,10 @@ export async function GET(request: NextRequest) {
     }
     const companyContactId = assignResult.companyAssignCustomerAsContact.companyContact!.id
 
-    // Nastavíme ho jako hlavní kontakt firmy
-    await shopifyGraphQL(ASSIGN_MAIN_CONTACT, { companyId, companyContactId })
+    // Hlavní kontakt firmy
+    await shopifyGraphQL(ASSIGN_MAIN_CONTACT, { companyId: company.id, companyContactId })
 
-    // Přidělíme roli na lokaci, aby mohl objednávat (preferujeme admin roli)
+    // Role na lokaci, aby mohl objednávat (preferujeme admin roli)
     const roles = company.contactRoles.nodes
     const role = roles.find(r => /admin/i.test(r.name)) ?? roles[0]
     if (role) {
@@ -222,11 +153,11 @@ export async function GET(request: NextRequest) {
       console.error('[approve] žádná company contact role k přiřazení')
     }
   } catch (err) {
-    console.error('[approve] companyCreate error', err)
-    return htmlResponse('Chyba', 'Vytvoření firmy v Shopify selhalo. Zkuste to znovu nebo kontaktujte správce.', 'error')
+    console.error('[approve] assign contact error', err)
+    return htmlResponse('Chyba', 'Přiřazení kontaktu k firmě selhalo. Zkuste to znovu nebo kontaktujte správce.', 'error')
   }
 
-  // Assign B2B catalog to company location
+  // B2B katalog na lokaci firmy
   if (B2B_CATALOG_ID) {
     try {
       await shopifyGraphQL(CATALOG_CONTEXT_UPDATE, {
@@ -239,41 +170,27 @@ export async function GET(request: NextRequest) {
     }
   }
 
-  // Update customer tags
-  const newTags = customer.tags.filter(t => t !== 'b2b-pending').concat('b2b-approved')
-  try {
-    await shopifyGraphQL(CUSTOMER_UPDATE, {
-      input: { id: customer.id, tags: newTags },
-    })
-  } catch (err) {
-    console.error('[approve] customerUpdate error', err)
-  }
-
-  // Mark token as used
+  // Označíme odkaz jako použitý + status
   try {
     await shopifyGraphQL(METAFIELDS_SET, {
       metafields: [
-        { ownerId: customer.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+        { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+        { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'approved' },
       ],
     })
   } catch (err) {
     console.error('[approve] metafieldsSet error', err)
   }
 
-  // Get account activation URL and send welcome email
+  // Welcome email (Klaviyo) — bez aktivace, customer už má účet
   try {
-    const numericId = customer.id.replace('gid://shopify/Customer/', '')
-    const activationData = await shopifyREST<{ account_activation_url: string }>(
-      `/customers/${numericId}/account_activation_url.json`,
-      { method: 'POST' }
-    )
-    await sendWelcomeEmail(customer.email, customer.firstName, companyName, activationData.account_activation_url)
+    await sendWelcomeEmail(contactEmail, contactFirstName, company.name, `${SHOP_URL}/account`)
   } catch (err) {
     console.error('[approve] welcome email error', err)
   }
 
-  console.log(`[approve] approved customerId=${customer.id} ico=${ico}`)
-  return htmlResponse('Schváleno', `Firma ${companyName} byla schválena. Zákazník (${customer.email}) obdržel welcome email s aktivačním odkazem.`, 'success')
+  console.log(`[approve] approved companyId=${company.id}`)
+  return htmlResponse('Schváleno', `Firma ${company.name} byla schválena. Kontakt (${contactEmail}) obdržel potvrzovací email a získal přístup k B2B katalogu.`, 'success')
 }
 
 function htmlResponse(title: string, message: string, type: 'success' | 'warning' | 'error'): NextResponse {

@@ -10,6 +10,7 @@ import { checkRateLimit } from '@/lib/rateLimit'
 const APP_URL = process.env.APP_URL!
 
 const schema = z.object({
+  customer_id: z.string().regex(/^\d+$/, 'Neplatné customer ID'),
   ico: z.string().refine(validateIco, 'Neplatné IČO'),
   company_name: z.string().min(1),
   dic: z.string().optional(),
@@ -26,11 +27,14 @@ const schema = z.object({
   consent: z.literal(true),
 })
 
-const CUSTOMER_CREATE = `
-  mutation customerCreate($input: CustomerInput!) {
-    customerCreate(input: $input) {
-      customer { id email }
-      userErrors { field message }
+// Company vytvoříme hned po odeslání formuláře. Kontakt (customer) se nezakládá —
+// vznikne až při approve. Veškerá data žádosti proto ukládáme jako metafieldy
+// na company.
+const COMPANY_CREATE = `
+  mutation companyCreate($input: CompanyCreateInput!) {
+    companyCreate(input: $input) {
+      company { id }
+      userErrors { field message code }
     }
   }
 `
@@ -39,23 +43,6 @@ const METAFIELDS_SET = `
   mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
     metafieldsSet(metafields: $metafields) {
       metafields { id }
-      userErrors { field message }
-    }
-  }
-`
-
-const CUSTOMER_BY_EMAIL = `
-  query customerByEmail($query: String!) {
-    customers(first: 1, query: $query) {
-      nodes { id tags }
-    }
-  }
-`
-
-const CUSTOMER_UPDATE = `
-  mutation customerUpdate($input: CustomerInput!) {
-    customerUpdate(input: $input) {
-      customer { id }
       userErrors { field message }
     }
   }
@@ -80,6 +67,7 @@ export async function POST(request: NextRequest) {
   }
 
   const d = parsed.data
+  const customerGid = `gid://shopify/Customer/${d.customer_id}`
 
   // Backend ARES re-check
   try {
@@ -95,94 +83,84 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Nelze ověřit IČO v ARES, zkuste to prosím znovu' }, { status: 502 })
   }
 
-  // Create Shopify customer
-  type CustomerCreateResult = {
-    customerCreate: {
-      customer: { id: string; email: string } | null
-      userErrors: { field: string[]; message: string }[]
+  // Vytvoříme B2B Company + lokaci s adresou. Kontakt přiřadíme až při approve.
+  type CompanyCreateResult = {
+    companyCreate: {
+      company: { id: string } | null
+      userErrors: { field: string[]; message: string; code: string }[]
     }
   }
-  type CustomerByEmailResult = {
-    customers: { nodes: { id: string; tags: string[] }[] }
-  }
 
-  let customerId: string
+  let companyId: string
   try {
-    const result = await shopifyGraphQL<CustomerCreateResult>(CUSTOMER_CREATE, {
+    const result = await shopifyGraphQL<CompanyCreateResult>(COMPANY_CREATE, {
       input: {
-        email: d.email,
-        firstName: d.first_name,
-        lastName: d.last_name,
-        phone: d.phone,
-        tags: ['b2b-pending'],
-        note: 'B2B žádost - viz metafieldy',
+        company: {
+          name: d.company_name,
+          externalId: d.ico,
+          note: `DIČ: ${d.dic || '—'} | Objem: ${d.expected_volume}`,
+        },
+        companyLocation: {
+          name: d.company_name,
+          shippingAddress: {
+            firstName: d.first_name,
+            lastName: d.last_name,
+            address1: d.address_street,
+            city: d.address_city,
+            zip: d.address_zip,
+            countryCode: 'CZ',
+          },
+          billingSameAsShipping: true,
+        },
       },
     })
 
-    const errors = result.customerCreate.userErrors
+    const errors = result.companyCreate.userErrors
     if (errors.length > 0) {
-      const emailTaken = errors.some(e => e.message.toLowerCase().includes('email'))
-      if (emailTaken) {
-        // Zákazník už existuje — nevytváříme nového, jen ho najdeme a níže
-        // doplníme/aktualizujeme custom fieldy (metafieldy).
-        const found = await shopifyGraphQL<CustomerByEmailResult>(CUSTOMER_BY_EMAIL, {
-          query: `email:${d.email}`,
-        })
-        const existing = found.customers.nodes[0]
-        if (!existing) {
-          throw new Error('Email obsazen, ale existující zákazník nenalezen')
-        }
-        customerId = existing.id
-
-        // Přidáme tag b2b-pending (zachováme stávající tagy).
-        const tags = Array.from(new Set([...existing.tags, 'b2b-pending']))
-        await shopifyGraphQL(CUSTOMER_UPDATE, {
-          input: {
-            id: customerId,
-            firstName: d.first_name,
-            lastName: d.last_name,
-            phone: d.phone,
-            tags,
-          },
-        })
-      } else {
-        throw new Error(`customerCreate errors: ${JSON.stringify(errors)}`)
+      const isDuplicate = errors.some(e => e.code === 'TAKEN' || e.message.toLowerCase().includes('external'))
+      if (isDuplicate) {
+        return NextResponse.json({ error: `Firma s IČO ${d.ico} je již registrována.` }, { status: 409 })
       }
-    } else {
-      customerId = result.customerCreate.customer!.id
+      throw new Error(`companyCreate errors: ${JSON.stringify(errors)}`)
     }
+
+    companyId = result.companyCreate.company!.id
   } catch (err) {
-    console.error('[submit] customerCreate/update error', err)
-    return NextResponse.json({ error: 'Chyba při vytváření zákazníka' }, { status: 500 })
+    console.error('[submit] companyCreate error', err)
+    return NextResponse.json({ error: 'Chyba při vytváření firmy' }, { status: 500 })
   }
 
-  // Save metafields
+  // Schvalovací token a odkazy (token referencuje company).
+  const token = signToken(companyId, d.email)
+  const approveLink = `${APP_URL}/api/b2b/approve?token=${encodeURIComponent(token)}`
+  const rejectLink = `${APP_URL}/api/b2b/reject?token=${encodeURIComponent(token)}`
+
+  // Uložíme data žádosti + kontakt + schvalovací odkazy jako metafieldy na company.
   try {
     const metafields = [
-      { ownerId: customerId, namespace: 'custom', key: 'company_name', type: 'single_line_text_field', value: d.company_name },
-      { ownerId: customerId, namespace: 'custom', key: 'ico', type: 'single_line_text_field', value: d.ico },
-      { ownerId: customerId, namespace: 'custom', key: 'dic', type: 'single_line_text_field', value: d.dic ?? '' },
-      { ownerId: customerId, namespace: 'custom', key: 'is_vat_payer', type: 'boolean', value: String(d.is_vat_payer) },
-      { ownerId: customerId, namespace: 'custom', key: 'address_street', type: 'single_line_text_field', value: d.address_street },
-      { ownerId: customerId, namespace: 'custom', key: 'address_city', type: 'single_line_text_field', value: d.address_city },
-      { ownerId: customerId, namespace: 'custom', key: 'address_zip', type: 'single_line_text_field', value: d.address_zip },
-      { ownerId: customerId, namespace: 'custom', key: 'expected_volume', type: 'single_line_text_field', value: d.expected_volume },
-      { ownerId: customerId, namespace: 'custom', key: 'application_note', type: 'multi_line_text_field', value: d.note },
-      { ownerId: customerId, namespace: 'custom', key: 'applied_at', type: 'date_time', value: new Date().toISOString() },
-      { ownerId: customerId, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'false' },
+      { ownerId: companyId, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerGid },
+      { ownerId: companyId, namespace: 'custom', key: 'dic', type: 'single_line_text_field', value: d.dic ?? '' },
+      { ownerId: companyId, namespace: 'custom', key: 'is_vat_payer', type: 'boolean', value: String(d.is_vat_payer) },
+      { ownerId: companyId, namespace: 'custom', key: 'expected_volume', type: 'single_line_text_field', value: d.expected_volume },
+      { ownerId: companyId, namespace: 'custom', key: 'application_note', type: 'multi_line_text_field', value: d.note },
+      { ownerId: companyId, namespace: 'custom', key: 'applied_at', type: 'date_time', value: new Date().toISOString() },
+      { ownerId: companyId, namespace: 'custom', key: 'contact_first_name', type: 'single_line_text_field', value: d.first_name },
+      { ownerId: companyId, namespace: 'custom', key: 'contact_last_name', type: 'single_line_text_field', value: d.last_name },
+      { ownerId: companyId, namespace: 'custom', key: 'contact_email', type: 'single_line_text_field', value: d.email },
+      { ownerId: companyId, namespace: 'custom', key: 'contact_phone', type: 'single_line_text_field', value: d.phone },
+      { ownerId: companyId, namespace: 'custom', key: 'approve_url', type: 'url', value: approveLink },
+      { ownerId: companyId, namespace: 'custom', key: 'reject_url', type: 'url', value: rejectLink },
+      { ownerId: companyId, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'false' },
+      { ownerId: companyId, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'pending' },
     ]
 
     await shopifyGraphQL(METAFIELDS_SET, { metafields })
   } catch (err) {
     console.error('[submit] metafieldsSet error', err)
-    // Non-fatal — pokračujeme, data jsou v customeru
+    // Non-fatal — company existuje, odkazy jsou i ve Slacku
   }
 
-  // Generate approval token and send admin email
-  const token = signToken(customerId, d.email)
-  const approveLink = `${APP_URL}/api/b2b/approve?token=${encodeURIComponent(token)}`
-  const rejectLink = `${APP_URL}/api/b2b/reject?token=${encodeURIComponent(token)}`
-
+  // Admin notifikace (Slack)
   try {
     await sendAdminNotification({
       companyName: d.company_name,
@@ -206,6 +184,6 @@ export async function POST(request: NextRequest) {
     // Non-fatal — žádost je uložena v Shopify
   }
 
-  console.log(`[submit] new B2B application customerId=${customerId} ico=${d.ico}`)
+  console.log(`[submit] new B2B application companyId=${companyId} ico=${d.ico}`)
   return NextResponse.json({ ok: true, message: 'Žádost přijata' })
 }
