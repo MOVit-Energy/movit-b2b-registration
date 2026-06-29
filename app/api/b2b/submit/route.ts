@@ -49,6 +49,31 @@ const METAFIELDS_SET = `
   }
 `
 
+// Výchozí splatnost nové firmy: Net 15. Payment terms šablony jsou společné pro
+// celý Shopify, jejich ID je ale per-shop, takže ho dohledáme za běhu a cacheneme.
+const PAYMENT_TERMS_TEMPLATES = `
+  query paymentTermsTemplates {
+    paymentTermsTemplates(paymentTermsType: NET) {
+      id
+      dueInDays
+    }
+  }
+`
+
+let cachedNet15TemplateId: string | null | undefined
+
+async function getNet15TemplateId(): Promise<string | null> {
+  if (cachedNet15TemplateId !== undefined) return cachedNet15TemplateId
+
+  type Result = { paymentTermsTemplates: { id: string; dueInDays: number | null }[] }
+  const { paymentTermsTemplates } = await shopifyGraphQL<Result>(PAYMENT_TERMS_TEMPLATES)
+  cachedNet15TemplateId = paymentTermsTemplates.find(t => t.dueInDays === 15)?.id ?? null
+  if (!cachedNet15TemplateId) {
+    console.error('[submit] Net 15 payment terms template not found')
+  }
+  return cachedNet15TemplateId
+}
+
 export async function POST(request: NextRequest) {
   const ip = request.headers.get('x-forwarded-for')?.split(',')[0].trim() ?? 'unknown'
   if (!checkRateLimit(ip)) {
@@ -92,6 +117,8 @@ export async function POST(request: NextRequest) {
     }
   }
 
+  const net15TemplateId = await getNet15TemplateId()
+
   let companyId: string
   try {
     const result = await shopifyGraphQL<CompanyCreateResult>(COMPANY_CREATE, {
@@ -112,6 +139,10 @@ export async function POST(request: NextRequest) {
             countryCode: 'CZ',
           },
           billingSameAsShipping: true,
+          // Výchozí splatnost Net 15. Pokud šablonu nedohledáme, firmu založíme bez ní.
+          ...(net15TemplateId
+            ? { buyerExperienceConfiguration: { paymentTermsTemplateId: net15TemplateId } }
+            : {}),
         },
       },
     })
