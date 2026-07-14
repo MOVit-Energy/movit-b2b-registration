@@ -3,11 +3,11 @@ import { verifyToken } from '@/lib/token'
 import { shopifyGraphQL } from '@/lib/shopify'
 import { sendWelcomeEmail } from '@/lib/email'
 
-const B2B_CATALOG_ID = process.env.B2B_CATALOG_ID!
 const SHOP_URL = process.env.SHOP_URL!.replace(/\/+$/, '')
 
-// Company i kontakt (customer) už existují. Při approve jen přiřadíme existujícího
-// customera jako kontakt firmy a firmě přidělíme B2B katalog. Customera neupravujeme.
+// Company i kontakt (customer) už existují a firma je při registraci přiřazena do
+// B2B marketu (viz submit). Při approve jen přiřadíme existujícího customera jako
+// kontakt firmy, aby mohl objednávat. Customera neupravujeme.
 const GET_COMPANY = `
   query getCompany($id: ID!) {
     company(id: $id) {
@@ -44,15 +44,6 @@ const CONTACT_ASSIGN_ROLE = `
   mutation companyContactAssignRole($companyContactId: ID!, $companyContactRoleId: ID!, $companyLocationId: ID!) {
     companyContactAssignRole(companyContactId: $companyContactId, companyContactRoleId: $companyContactRoleId, companyLocationId: $companyLocationId) {
       companyContactRoleAssignment { id }
-      userErrors { field message code }
-    }
-  }
-`
-
-const CATALOG_CONTEXT_UPDATE = `
-  mutation catalogContextUpdate($catalogId: ID!, $contextsToAdd: CatalogContextInput) {
-    catalogContextUpdate(catalogId: $catalogId, contextsToAdd: $contextsToAdd) {
-      catalog { id }
       userErrors { field message code }
     }
   }
@@ -155,19 +146,6 @@ export async function GET(request: NextRequest) {
   } catch (err) {
     console.error('[approve] assign contact error', err)
     return htmlResponse('Chyba', 'Přiřazení kontaktu k firmě selhalo. Zkuste to znovu nebo kontaktujte správce.', 'error')
-  }
-
-  // B2B katalog na lokaci firmy
-  if (B2B_CATALOG_ID) {
-    try {
-      await shopifyGraphQL(CATALOG_CONTEXT_UPDATE, {
-        catalogId: B2B_CATALOG_ID,
-        contextsToAdd: { companyLocationIds: [companyLocationId] },
-      })
-    } catch (err) {
-      console.error('[approve] catalogContextUpdate error', err)
-      // Non-fatal — lze přiřadit ručně v adminu
-    }
   }
 
   // Označíme odkaz jako použitý + status

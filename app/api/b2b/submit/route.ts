@@ -10,6 +10,11 @@ import { checkRateLimit } from '@/lib/rateLimit'
 // Ořežeme případné koncové lomítko, ať nevznikne "//api" ve schvalovacích odkazech.
 const APP_URL = process.env.APP_URL!.replace(/\/+$/, '')
 
+// B2B market, do kterého patří B2B katalog (viz B2B_CATALOG_ID). Katalog je typu
+// MarketCatalog, takže se firmě nepřiřazuje přímo — přiřadíme lokaci firmy do
+// marketu a katalog se aplikuje skrz něj.
+const B2B_MARKET_ID = process.env.B2B_MARKET_ID
+
 const schema = z.object({
   customer_id: z.string().regex(/^\d+$/, 'Neplatné customer ID'),
   ico: z.string().refine(validateIco, 'Neplatné IČO'),
@@ -34,8 +39,20 @@ const schema = z.object({
 const COMPANY_CREATE = `
   mutation companyCreate($input: CompanyCreateInput!) {
     companyCreate(input: $input) {
-      company { id }
+      company {
+        id
+        locations(first: 1) { nodes { id } }
+      }
       userErrors { field message code }
+    }
+  }
+`
+
+const MARKET_ADD_COMPANY_LOCATION = `
+  mutation marketUpdate($id: ID!, $input: MarketUpdateInput!) {
+    marketUpdate(id: $id, input: $input) {
+      market { id }
+      userErrors { field message }
     }
   }
 `
@@ -112,7 +129,10 @@ export async function POST(request: NextRequest) {
   // Vytvoříme B2B Company + lokaci s adresou. Kontakt přiřadíme až při approve.
   type CompanyCreateResult = {
     companyCreate: {
-      company: { id: string } | null
+      company: {
+        id: string
+        locations: { nodes: { id: string }[] }
+      } | null
       userErrors: { field: string[]; message: string; code: string }[]
     }
   }
@@ -120,6 +140,7 @@ export async function POST(request: NextRequest) {
   const net15TemplateId = await getNet15TemplateId()
 
   let companyId: string
+  let companyLocationId: string | undefined
   try {
     const result = await shopifyGraphQL<CompanyCreateResult>(COMPANY_CREATE, {
       input: {
@@ -139,10 +160,12 @@ export async function POST(request: NextRequest) {
             countryCode: 'CZ',
           },
           billingSameAsShipping: true,
-          // Výchozí splatnost Net 15. Pokud šablonu nedohledáme, firmu založíme bez ní.
-          ...(net15TemplateId
-            ? { buyerExperienceConfiguration: { paymentTermsTemplateId: net15TemplateId } }
-            : {}),
+          buyerExperienceConfiguration: {
+            // Firma si smí při checkoutu zvolit libovolnou jednorázovou adresu expedice.
+            editableShippingAddress: true,
+            // Výchozí splatnost Net 15. Pokud šablonu nedohledáme, firmu založíme bez ní.
+            ...(net15TemplateId ? { paymentTermsTemplateId: net15TemplateId } : {}),
+          },
         },
       },
     })
@@ -157,9 +180,44 @@ export async function POST(request: NextRequest) {
     }
 
     companyId = result.companyCreate.company!.id
+    companyLocationId = result.companyCreate.company!.locations.nodes[0]?.id
   } catch (err) {
     console.error('[submit] companyCreate error', err)
     return NextResponse.json({ error: 'Chyba při vytváření firmy' }, { status: 500 })
+  }
+
+  // Lokaci firmy přiřadíme do B2B marketu — tím firma dostane B2B katalog a ceny.
+  // Objednávat ale může až po approve, kdy k firmě přiřadíme kontakt.
+  if (B2B_MARKET_ID && companyLocationId) {
+    type MarketUpdateResult = {
+      marketUpdate: {
+        market: { id: string } | null
+        userErrors: { field: string[]; message: string }[]
+      }
+    }
+
+    try {
+      const result = await shopifyGraphQL<MarketUpdateResult>(MARKET_ADD_COMPANY_LOCATION, {
+        id: B2B_MARKET_ID,
+        input: {
+          conditions: {
+            conditionsToAdd: {
+              companyLocationsCondition: { companyLocationIds: [companyLocationId] },
+            },
+          },
+        },
+      })
+
+      const errors = result.marketUpdate.userErrors
+      if (errors.length > 0) {
+        console.error('[submit] marketUpdate userErrors', errors)
+      }
+    } catch (err) {
+      console.error('[submit] marketUpdate error', err)
+      // Non-fatal — firma je založená, market lze přiřadit ručně v adminu.
+    }
+  } else if (!B2B_MARKET_ID) {
+    console.error('[submit] B2B_MARKET_ID není nastaveno, firma zůstává bez B2B katalogu')
   }
 
   // Schvalovací token a odkazy (token referencuje company).
