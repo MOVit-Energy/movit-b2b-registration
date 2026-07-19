@@ -24,8 +24,19 @@ export interface ApplicationData {
   phone: string
   expectedVolume: string
   note: string
+  // Stav zákaznického účtu pro daný email:
+  //  - 'new'      → email nemá účet, schválením vznikne nový zákaznický účet + firma
+  //  - 'existing' → email už má B2C účet, schválením bude připojen k firmě
+  accountState: 'new' | 'existing'
   approveLink: string
   rejectLink: string
+}
+
+// Lidsky čitelné upozornění pro admina o dopadu schválení na zákaznický účet.
+export function accountStateNote(state: 'new' | 'existing'): string {
+  return state === 'new'
+    ? 'Tento email zatím nemá účet — schválením vznikne nový zákaznický účet a firma.'
+    : '⚠️ Tento email už patří existujícímu B2C účtu — schválením bude tento účet připojen k firmě (zákazník o tom nemusí vědet).'
 }
 
 // Názvy metrik musí odpovídat triggerům Flows v Klaviyo adminu.
@@ -62,6 +73,8 @@ async function sendAdminNotificationEmail(data: ApplicationData): Promise<void> 
       phone: data.phone,
       expectedVolume: data.expectedVolume,
       note: data.note || '—',
+      accountState: data.accountState,
+      accountStateNote: accountStateNote(data.accountState),
       approveLink: data.approveLink,
       rejectLink: data.rejectLink,
     }
@@ -72,14 +85,17 @@ export async function sendWelcomeEmail(
   to: string,
   firstName: string,
   companyName: string,
-  loginUrl: string
+  loginUrl: string,
+  accountState: 'new' | 'existing' = 'existing'
 ): Promise<void> {
-  // Customer už má aktivní účet (registroval se před vyplněním formuláře), takže
-  // neposíláme aktivační odkaz — jen potvrzení schválení a odkaz na přihlášení.
+  // Přihlášení probíhá přes jednorázový kód na email (new customer accounts),
+  // takže neposíláme aktivační odkaz — jen potvrzení schválení a odkaz na přihlášení.
+  // accountState umožní v Klaviyo šabloně odlišit text pro nově založený vs.
+  // existující (připojený) účet.
   await trackEvent(
     METRIC_APPROVED,
     { email: to, first_name: firstName },
-    { companyName, loginUrl }
+    { companyName, loginUrl, accountState }
   )
 }
 

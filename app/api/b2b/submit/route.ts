@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { fetchAres, validateIco, AresNotFoundError } from '@/lib/ares'
-import { shopifyGraphQL } from '@/lib/shopify'
+import { shopifyGraphQL, findCustomerByEmail } from '@/lib/shopify'
 import { signToken } from '@/lib/token'
 import { sendAdminNotification } from '@/lib/email'
 import { checkRateLimit } from '@/lib/rateLimit'
@@ -16,7 +16,8 @@ const APP_URL = process.env.APP_URL!.replace(/\/+$/, '')
 const B2B_MARKET_ID = process.env.B2B_MARKET_ID
 
 const schema = z.object({
-  customer_id: z.string().regex(/^\d+$/, 'Neplatné customer ID'),
+  // Nepovinné — přihlášený storefront ho pošle, nepřihlášený se identifikuje jen emailem.
+  customer_id: z.string().regex(/^\d+$/, 'Neplatné customer ID').optional(),
   ico: z.string().refine(validateIco, 'Neplatné IČO'),
   company_name: z.string().min(1),
   dic: z.string().optional(),
@@ -110,7 +111,37 @@ export async function POST(request: NextRequest) {
   }
 
   const d = parsed.data
-  const customerGid = `gid://shopify/Customer/${d.customer_id}`
+
+  // Ověření emailu vůči Shopify. Rozlišujeme tři stavy:
+  //  - patří k firmě        → odmítnout (email už je B2B)
+  //  - existuje bez firmy    → připojíme existující účet při approve (B2C → B2B)
+  //  - neexistuje            → účet vznikne při approve
+  // Přihlášený uživatel posílá customer_id (jeho email je předvyplněný a zamčený);
+  // ten je autoritativní pro identitu.
+  let customerGid: string | null = null
+  let accountState: 'existing' | 'new'
+  try {
+    const existing = await findCustomerByEmail(d.email)
+    if (existing && existing.companyCount > 0) {
+      return NextResponse.json(
+        { error: 'Zadaný email již existuje, zvolte prosím jiný a nebo se přihlaste.' },
+        { status: 409 }
+      )
+    }
+
+    if (d.customer_id) {
+      customerGid = `gid://shopify/Customer/${d.customer_id}`
+      accountState = 'existing'
+    } else if (existing) {
+      customerGid = existing.id
+      accountState = 'existing'
+    } else {
+      accountState = 'new'
+    }
+  } catch (err) {
+    console.error('[submit] findCustomerByEmail error', err)
+    return NextResponse.json({ error: 'Nelze ověřit email, zkuste to prosím znovu' }, { status: 502 })
+  }
 
   // Backend ARES re-check
   try {
@@ -228,7 +259,12 @@ export async function POST(request: NextRequest) {
   // Uložíme data žádosti + kontakt + schvalovací odkazy jako metafieldy na company.
   try {
     const metafields = [
-      { ownerId: companyId, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerGid },
+      // customer_reference uložíme jen když už zákazník existuje; u nového emailu
+      // účet teprve vznikne při approve, takže tu referenci ještě nemáme.
+      ...(customerGid
+        ? [{ ownerId: companyId, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerGid }]
+        : []),
+      { ownerId: companyId, namespace: 'custom', key: 'account_state', type: 'single_line_text_field', value: accountState },
       { ownerId: companyId, namespace: 'custom', key: 'dic', type: 'single_line_text_field', value: d.dic ?? '' },
       { ownerId: companyId, namespace: 'custom', key: 'is_vat_payer', type: 'boolean', value: String(d.is_vat_payer) },
       { ownerId: companyId, namespace: 'custom', key: 'expected_volume', type: 'single_line_text_field', value: d.expected_volume },
@@ -266,6 +302,7 @@ export async function POST(request: NextRequest) {
       phone: d.phone,
       expectedVolume: d.expected_volume,
       note: d.note,
+      accountState,
       approveLink,
       rejectLink,
     })

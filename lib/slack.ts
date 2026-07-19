@@ -1,6 +1,6 @@
 // Slack notifikace pro admina (nová B2B žádost) přes Incoming Webhook.
 // Webhook URL nastav v Slacku: Apps → Incoming Webhooks → Add to channel.
-import type { ApplicationData } from './email'
+import { accountStateNote, type ApplicationData } from './email'
 
 const WEBHOOK_URL = process.env.SLACK_WEBHOOK_URL!
 
@@ -25,6 +25,9 @@ export async function sendSlackAdminNotification(d: ApplicationData): Promise<vo
   if (d.note) {
     blocks.push({ type: 'section', text: { type: 'mrkdwn', text: `*Poznámka:*\n${d.note}` } })
   }
+
+  // Upozornění na dopad schválení na zákaznický účet (nový vs. připojení B2C).
+  blocks.push({ type: 'section', text: { type: 'mrkdwn', text: accountStateNote(d.accountState) } })
 
   blocks.push({
     type: 'actions',

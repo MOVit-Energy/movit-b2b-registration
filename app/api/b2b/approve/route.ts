@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/token'
-import { shopifyGraphQL } from '@/lib/shopify'
+import { shopifyGraphQL, findCustomerByEmail, createCustomer } from '@/lib/shopify'
 import { sendWelcomeEmail } from '@/lib/email'
 
 const SHOP_URL = process.env.SHOP_URL!.replace(/\/+$/, '')
@@ -95,17 +95,34 @@ export async function GET(request: NextRequest) {
     return htmlResponse('Odkaz již použit', 'Tento schvalovací odkaz byl již použit.', 'warning')
   }
 
-  const customerId = metafield(mf, 'customer')
-  if (!customerId) {
-    return htmlResponse('Chybí kontakt', 'K firmě není přiřazen žádný zákazník.', 'error')
-  }
-
   const contactEmail = metafield(mf, 'contact_email') || payload.email
   const contactFirstName = metafield(mf, 'contact_first_name')
+  const contactLastName = metafield(mf, 'contact_last_name')
+  const accountState: 'new' | 'existing' = metafield(mf, 'account_state') === 'new' ? 'new' : 'existing'
   const companyLocationId = company.locations.nodes[0]?.id
 
   if (!companyLocationId) {
     return htmlResponse('Chyba', 'Firma nemá lokaci, nelze ji dokončit.', 'error')
+  }
+
+  // Kontakt: buď už existuje (uložený jako customer_reference při submitu), nebo
+  // ho pro nový email teď založíme. findCustomerByEmail navíc ošetří případ, kdy
+  // mezi submitem a approve mezitím účet se stejným emailem vznikl (jinak by
+  // createCustomer spadl na "email taken").
+  let customerId = metafield(mf, 'customer')
+  if (!customerId) {
+    if (!contactEmail) {
+      return htmlResponse('Chybí kontakt', 'K žádosti chybí email kontaktu.', 'error')
+    }
+    try {
+      const existing = await findCustomerByEmail(contactEmail)
+      customerId = existing
+        ? existing.id
+        : await createCustomer({ email: contactEmail, firstName: contactFirstName, lastName: contactLastName })
+    } catch (err) {
+      console.error('[approve] resolve/create customer error', err)
+      return htmlResponse('Chyba', 'Založení zákaznického účtu selhalo. Zkuste to znovu nebo kontaktujte správce.', 'error')
+    }
   }
 
   // Přiřadíme existujícího customera jako kontakt firmy + roli + katalog.
@@ -154,15 +171,18 @@ export async function GET(request: NextRequest) {
       metafields: [
         { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
         { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'approved' },
+        // Doplníme referenci na kontakt (u nového emailu vznikla teprve teď).
+        { ownerId: company.id, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerId },
       ],
     })
   } catch (err) {
     console.error('[approve] metafieldsSet error', err)
   }
 
-  // Welcome email (Klaviyo) — bez aktivace, customer už má účet
+  // Welcome email (Klaviyo). U nových i připojených účtů je přihlášení přes
+  // jednorázový kód na email; accountState umožní v Klaviyo odlišit text.
   try {
-    await sendWelcomeEmail(contactEmail, contactFirstName, company.name, `${SHOP_URL}/account`)
+    await sendWelcomeEmail(contactEmail, contactFirstName, company.name, `${SHOP_URL}/account`, accountState)
   } catch (err) {
     console.error('[approve] welcome email error', err)
   }

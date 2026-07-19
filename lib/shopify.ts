@@ -63,6 +63,86 @@ export async function shopifyGraphQL<T = unknown>(
   return json.data as T
 }
 
+// ── Customer helpers ────────────────────────────────────────────────────────
+// Používá je email-first registrační flow: při submitu ověřujeme, zda email už
+// existuje (a případně patří k firmě), při approve zakládáme účet neexistujícímu
+// emailu.
+
+const CUSTOMER_BY_EMAIL = `
+  query customerByEmail($query: String!) {
+    customers(first: 5, query: $query) {
+      nodes {
+        id
+        email
+        companyContactProfiles { id }
+      }
+    }
+  }
+`
+
+const CUSTOMER_CREATE = `
+  mutation customerCreate($input: CustomerInput!) {
+    customerCreate(input: $input) {
+      customer { id }
+      userErrors { field message }
+    }
+  }
+`
+
+export interface CustomerLookup {
+  id: string
+  email: string
+  // Počet firemních kontaktů zákazníka. > 0 znamená, že email už patří k nějaké firmě.
+  companyCount: number
+}
+
+// Vrátí zákazníka podle přesné shody emailu, nebo null. Shopify email search umí
+// vracet i částečné shody, proto výsledek filtrujeme na přesnou (case-insensitive) shodu.
+export async function findCustomerByEmail(email: string): Promise<CustomerLookup | null> {
+  const normalized = email.trim().toLowerCase()
+  type Result = {
+    customers: {
+      nodes: { id: string; email: string | null; companyContactProfiles: { id: string }[] }[]
+    }
+  }
+  const { customers } = await shopifyGraphQL<Result>(CUSTOMER_BY_EMAIL, {
+    query: `email:${normalized}`,
+  })
+  const match = customers.nodes.find(n => (n.email ?? '').toLowerCase() === normalized)
+  if (!match) return null
+  return {
+    id: match.id,
+    email: match.email ?? normalized,
+    companyCount: match.companyContactProfiles.length,
+  }
+}
+
+// Založí nový zákaznický účet. U "new customer accounts" stačí vytvořit záznam —
+// přihlášení pak probíhá přes jednorázový kód na email, žádné heslo se nenastavuje.
+export async function createCustomer(input: {
+  email: string
+  firstName?: string
+  lastName?: string
+}): Promise<string> {
+  type Result = {
+    customerCreate: {
+      customer: { id: string } | null
+      userErrors: { field: string[]; message: string }[]
+    }
+  }
+  const { customerCreate } = await shopifyGraphQL<Result>(CUSTOMER_CREATE, {
+    input: {
+      email: input.email,
+      firstName: input.firstName || undefined,
+      lastName: input.lastName || undefined,
+    },
+  })
+  if (customerCreate.userErrors.length > 0) {
+    throw new Error(`customerCreate errors: ${JSON.stringify(customerCreate.userErrors)}`)
+  }
+  return customerCreate.customer!.id
+}
+
 export async function shopifyREST<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   const token = await getAccessToken()
 
