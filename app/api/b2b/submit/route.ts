@@ -265,6 +265,7 @@ export async function POST(request: NextRequest) {
         ? [{ ownerId: companyId, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerGid }]
         : []),
       { ownerId: companyId, namespace: 'custom', key: 'account_state', type: 'single_line_text_field', value: accountState },
+      { ownerId: companyId, namespace: 'custom', key: 'ic', type: 'single_line_text_field', value: d.ico },
       { ownerId: companyId, namespace: 'custom', key: 'dic', type: 'single_line_text_field', value: d.dic ?? '' },
       { ownerId: companyId, namespace: 'custom', key: 'is_vat_payer', type: 'boolean', value: String(d.is_vat_payer) },
       { ownerId: companyId, namespace: 'custom', key: 'expected_volume', type: 'single_line_text_field', value: d.expected_volume },
