@@ -143,6 +143,64 @@ export async function createCustomer(input: {
   return customerCreate.customer!.id
 }
 
+// ── Metafields ──────────────────────────────────────────────────────────────
+
+const METAFIELDS_SET = `
+  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
+    metafieldsSet(metafields: $metafields) {
+      metafields { id }
+      userErrors { field message code }
+    }
+  }
+`
+
+export interface MetafieldInput {
+  ownerId: string
+  namespace: string
+  key: string
+  type: string
+  value: string
+}
+
+type MetafieldsSetResult = {
+  metafieldsSet: {
+    metafields: { id: string }[] | null
+    userErrors: { field: string[]; message: string; code: string | null }[]
+  }
+}
+
+async function metafieldsSetBatch(metafields: MetafieldInput[]) {
+  const { metafieldsSet } = await shopifyGraphQL<MetafieldsSetResult>(METAFIELDS_SET, { metafields })
+  return metafieldsSet.userErrors
+}
+
+// metafieldsSet je atomický — jediná neplatná hodnota zahodí celou dávku, takže by
+// kvůli jednomu poli zmizely všechny metafieldy firmy. Prázdné hodnoty proto vůbec
+// neposíláme (Shopify je odmítá s kódem BLANK; nevyplněné DIČ/poznámka jsou běžné)
+// a když dávka přesto selže, zkusíme metafieldy uložit po jednom, ať jeden vadný
+// nezabije ostatní. userErrors chodí v HTTP 200, takže bez explicitní kontroly by
+// selhání proběhlo tiše.
+export async function setMetafields(metafields: MetafieldInput[], logPrefix: string): Promise<void> {
+  const payload = metafields.filter(m => m.value.trim() !== '')
+  if (payload.length === 0) return
+
+  const errors = await metafieldsSetBatch(payload)
+  if (errors.length === 0) return
+
+  console.error(`${logPrefix} metafieldsSet userErrors, retrying one by one`, errors)
+
+  for (const mf of payload) {
+    try {
+      const single = await metafieldsSetBatch([mf])
+      if (single.length > 0) {
+        console.error(`${logPrefix} metafieldsSet failed key=${mf.key}`, single)
+      }
+    } catch (err) {
+      console.error(`${logPrefix} metafieldsSet failed key=${mf.key}`, err)
+    }
+  }
+}
+
 export async function shopifyREST<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   const token = await getAccessToken()
 

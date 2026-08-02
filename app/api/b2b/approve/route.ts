@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/token'
-import { shopifyGraphQL, findCustomerByEmail, createCustomer } from '@/lib/shopify'
+import { shopifyGraphQL, findCustomerByEmail, createCustomer, setMetafields } from '@/lib/shopify'
 import { sendWelcomeEmail } from '@/lib/email'
 
 const SHOP_URL = process.env.SHOP_URL!.replace(/\/+$/, '')
@@ -45,15 +45,6 @@ const CONTACT_ASSIGN_ROLE = `
     companyContactAssignRole(companyContactId: $companyContactId, companyContactRoleId: $companyContactRoleId, companyLocationId: $companyLocationId) {
       companyContactRoleAssignment { id }
       userErrors { field message code }
-    }
-  }
-`
-
-const METAFIELDS_SET = `
-  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-    metafieldsSet(metafields: $metafields) {
-      metafields { id }
-      userErrors { field message }
     }
   }
 `
@@ -167,14 +158,12 @@ export async function GET(request: NextRequest) {
 
   // Označíme odkaz jako použitý + status
   try {
-    await shopifyGraphQL(METAFIELDS_SET, {
-      metafields: [
-        { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
-        { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'approved' },
-        // Doplníme referenci na kontakt (u nového emailu vznikla teprve teď).
-        { ownerId: company.id, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerId },
-      ],
-    })
+    await setMetafields([
+      { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+      { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'approved' },
+      // Doplníme referenci na kontakt (u nového emailu vznikla teprve teď).
+      { ownerId: company.id, namespace: 'custom', key: 'customer', type: 'customer_reference', value: customerId },
+    ], '[approve]')
   } catch (err) {
     console.error('[approve] metafieldsSet error', err)
   }

@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { fetchAres, validateIco, AresNotFoundError } from '@/lib/ares'
-import { shopifyGraphQL, findCustomerByEmail } from '@/lib/shopify'
+import { shopifyGraphQL, findCustomerByEmail, setMetafields } from '@/lib/shopify'
 import { signToken } from '@/lib/token'
 import { sendAdminNotification } from '@/lib/email'
 import { checkRateLimit } from '@/lib/rateLimit'
@@ -53,15 +53,6 @@ const MARKET_ADD_COMPANY_LOCATION = `
   mutation marketUpdate($id: ID!, $input: MarketUpdateInput!) {
     marketUpdate(id: $id, input: $input) {
       market { id }
-      userErrors { field message }
-    }
-  }
-`
-
-const METAFIELDS_SET = `
-  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-    metafieldsSet(metafields: $metafields) {
-      metafields { id }
       userErrors { field message }
     }
   }
@@ -257,6 +248,8 @@ export async function POST(request: NextRequest) {
   const rejectLink = `${APP_URL}/api/b2b/reject?token=${encodeURIComponent(token)}`
 
   // Uložíme data žádosti + kontakt + schvalovací odkazy jako metafieldy na company.
+  // Nevyplněné hodnoty (DIČ, poznámka) odfiltruje setMetafields — prázdná hodnota
+  // by jinak shodila celou atomickou dávku.
   try {
     const metafields = [
       // customer_reference uložíme jen když už zákazník existuje; u nového emailu
@@ -281,7 +274,7 @@ export async function POST(request: NextRequest) {
       { ownerId: companyId, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'pending' },
     ]
 
-    await shopifyGraphQL(METAFIELDS_SET, { metafields })
+    await setMetafields(metafields, '[submit]')
   } catch (err) {
     console.error('[submit] metafieldsSet error', err)
     // Non-fatal — company existuje, odkazy jsou i ve Slacku

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { verifyToken } from '@/lib/token'
-import { shopifyGraphQL } from '@/lib/shopify'
+import { shopifyGraphQL, setMetafields } from '@/lib/shopify'
 import { sendRejectionEmail } from '@/lib/email'
 
 const GET_COMPANY = `
@@ -11,15 +11,6 @@ const GET_COMPANY = `
       metafields(first: 20, namespace: "custom") {
         nodes { key value }
       }
-    }
-  }
-`
-
-const METAFIELDS_SET = `
-  mutation metafieldsSet($metafields: [MetafieldsSetInput!]!) {
-    metafieldsSet(metafields: $metafields) {
-      metafields { id }
-      userErrors { field message }
     }
   }
 `
@@ -63,12 +54,10 @@ export async function GET(request: NextRequest) {
   // Označíme odkaz jako použitý + status zamítnuto. Firmu i customera necháváme
   // beze změny (customera neupravujeme; firmu lze případně smazat ručně v adminu).
   try {
-    await shopifyGraphQL(METAFIELDS_SET, {
-      metafields: [
-        { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
-        { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'rejected' },
-      ],
-    })
+    await setMetafields([
+      { ownerId: company.id, namespace: 'custom', key: 'approval_token_used', type: 'boolean', value: 'true' },
+      { ownerId: company.id, namespace: 'custom', key: 'b2b_status', type: 'single_line_text_field', value: 'rejected' },
+    ], '[reject]')
   } catch (err) {
     console.error('[reject] metafieldsSet error', err)
   }
