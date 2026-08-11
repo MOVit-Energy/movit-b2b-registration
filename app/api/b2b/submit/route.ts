@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { fetchAres, validateIco, AresNotFoundError } from '@/lib/ares'
 import { shopifyGraphQL, findCustomerByEmail, setMetafields } from '@/lib/shopify'
+import { normalizePhone } from '@/lib/phone'
 import { signToken } from '@/lib/token'
 import { sendAdminNotification } from '@/lib/email'
 import { checkRateLimit } from '@/lib/rateLimit'
@@ -161,6 +162,13 @@ export async function POST(request: NextRequest) {
 
   const net15TemplateId = await getNet15TemplateId()
 
+  // Telefon do adresy lokace, ať ho B2B checkout předplní do objednávky. Neplatné
+  // číslo do adresy neposíláme — Shopify by kvůli němu odmítlo celý companyCreate.
+  const addressPhone = normalizePhone(d.phone)
+  if (!addressPhone) {
+    console.error(`[submit] telefon "${d.phone}" nelze normalizovat, adresa lokace zůstane bez telefonu`)
+  }
+
   let companyId: string
   let companyLocationId: string | undefined
   try {
@@ -180,6 +188,7 @@ export async function POST(request: NextRequest) {
             city: d.address_city,
             zip: d.address_zip,
             countryCode: 'CZ',
+            ...(addressPhone ? { phone: addressPhone } : {}),
           },
           billingSameAsShipping: true,
           buyerExperienceConfiguration: {
