@@ -1,0 +1,12 @@
+{
+  "crons": [
+    {
+      "path": "/api/cron/sync-bestsellers",
+      "schedule": "0 2 * * 1"
+    },
+    {
+      "path": "/api/cron/send-order-followups",
+      "schedule": "0 6 * * *"
+    }
+  ]
+}

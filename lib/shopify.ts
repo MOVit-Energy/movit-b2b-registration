@@ -184,19 +184,24 @@ export async function setMetafields(metafields: MetafieldInput[], logPrefix: str
   const payload = metafields.filter(m => m.value.trim() !== '')
   if (payload.length === 0) return
 
-  const errors = await metafieldsSetBatch(payload)
-  if (errors.length === 0) return
+  // Shopify limituje metafieldsSet na 25 vstupů za volání (relevantní hlavně pro
+  // hromadné zápisy jako bestseller rank sync — b2b flow posílá jen pár polí).
+  for (let i = 0; i < payload.length; i += 25) {
+    const chunk = payload.slice(i, i + 25)
+    const errors = await metafieldsSetBatch(chunk)
+    if (errors.length === 0) continue
 
-  console.error(`${logPrefix} metafieldsSet userErrors, retrying one by one`, errors)
+    console.error(`${logPrefix} metafieldsSet userErrors, retrying one by one`, errors)
 
-  for (const mf of payload) {
-    try {
-      const single = await metafieldsSetBatch([mf])
-      if (single.length > 0) {
-        console.error(`${logPrefix} metafieldsSet failed key=${mf.key}`, single)
+    for (const mf of chunk) {
+      try {
+        const single = await metafieldsSetBatch([mf])
+        if (single.length > 0) {
+          console.error(`${logPrefix} metafieldsSet failed owner=${mf.ownerId} key=${mf.key}`, single)
+        }
+      } catch (err) {
+        console.error(`${logPrefix} metafieldsSet failed owner=${mf.ownerId} key=${mf.key}`, err)
       }
-    } catch (err) {
-      console.error(`${logPrefix} metafieldsSet failed key=${mf.key}`, err)
     }
   }
 }
