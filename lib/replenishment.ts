@@ -435,6 +435,7 @@ async function createDiscountCode(productIds: string[]): Promise<{ code: string;
       appliesOncePerCustomer: false,
       usageLimit: 1,
       tags: [DISCOUNT_TAG],
+      combinesWith: { productDiscounts: true, orderDiscounts: true },
     },
   })
 
