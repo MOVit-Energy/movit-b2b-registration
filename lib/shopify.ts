@@ -206,6 +206,27 @@ export async function setMetafields(metafields: MetafieldInput[], logPrefix: str
   }
 }
 
+const TAGS_ADD = `
+  mutation TagsAdd($id: ID!, $tags: [String!]!) {
+    tagsAdd(id: $id, tags: $tags) {
+      userErrors { field message }
+    }
+  }
+`
+
+// Tag na zdroji (objednávka, produkt, ...) — na rozdíl od metafieldů se podle
+// tagů dá filtrovat přímo v Shopify Adminu (order/product search neumí
+// filtrovat podle metafieldu, viz lib/replenishment.ts).
+export async function addTags(resourceId: string, tags: string[], logPrefix: string): Promise<void> {
+  const { tagsAdd } = await shopifyGraphQL<{ tagsAdd: { userErrors: { field: string[]; message: string }[] } }>(
+    TAGS_ADD,
+    { id: resourceId, tags }
+  )
+  if (tagsAdd.userErrors.length > 0) {
+    console.error(`${logPrefix} tagsAdd userErrors owner=${resourceId}`, tagsAdd.userErrors)
+  }
+}
+
 export async function shopifyREST<T = unknown>(path: string, options?: RequestInit): Promise<T> {
   const token = await getAccessToken()
 

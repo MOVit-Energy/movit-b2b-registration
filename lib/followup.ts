@@ -1,4 +1,4 @@
-import { shopifyGraphQL, setMetafields } from './shopify'
+import { shopifyGraphQL, setMetafields, addTags } from './shopify'
 import { trackEvent } from './klaviyo'
 
 const ORDER_LOOKBACK_DAYS = Number(process.env.ORDER_LOOKBACK_DAYS || 30)
@@ -6,6 +6,9 @@ const FOLLOWUP_DELAY_HOURS = Number(process.env.FOLLOWUP_DELAY_HOURS || 24)
 const MAX_PRODUCTS = 5
 const SHOP_URL = (process.env.SHOP_URL || '').replace(/\/+$/, '')
 const KLAVIYO_METRIC = 'Order Product Followup'
+// Tag na objednávce vedle followup_email_sent_at metafieldu — Shopify order
+// search neumí filtrovat podle metafieldu, ale podle tagu ano.
+const ORDER_TAG = 'order-followup-sent'
 
 // Testovací režim: když je nastaveno, VŠECHNY followup e-maily se přesměrují na
 // tuto adresu místo skutečného zákazníka (objednávka se přesto vyhodnocuje a
@@ -188,6 +191,7 @@ async function markSent(orderId: string): Promise<void> {
     ],
     '[followup]'
   )
+  await addTags(orderId, [ORDER_TAG], '[followup]')
 }
 
 export interface SendFollowupsResult {
