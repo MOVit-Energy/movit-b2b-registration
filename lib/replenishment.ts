@@ -5,6 +5,10 @@ const LOOKBACK_DAYS = Number(process.env.REPLENISHMENT_LOOKBACK_DAYS || 400)
 const CUSTOMER_COOLDOWN_DAYS = 7
 const DISCOUNT_VALID_DAYS = 3
 const DISCOUNT_PERCENTAGE = 10
+// Tag na každém vygenerovaném kódu — umožňuje si v Shopify adminu (Discounts →
+// filtr/uložený pohled podle tagu) tyhle automaticky generované kódy schovat
+// z výchozího přehledu, ať nezahlcují seznam ručně vytvářených akcí.
+const DISCOUNT_TAG = 'auto-replenishment'
 const SHOP_URL = (process.env.SHOP_URL || '').replace(/\/+$/, '')
 const TIMEZONE = 'Europe/Prague'
 const METRIC_REMINDER = 'Replenishment Reminder'
@@ -430,6 +434,7 @@ async function createDiscountCode(productIds: string[]): Promise<{ code: string;
       },
       appliesOncePerCustomer: false,
       usageLimit: 1,
+      tags: [DISCOUNT_TAG],
     },
   })
 
