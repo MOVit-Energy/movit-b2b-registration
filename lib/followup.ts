@@ -7,6 +7,11 @@ const MAX_PRODUCTS = 5
 const SHOP_URL = (process.env.SHOP_URL || '').replace(/\/+$/, '')
 const KLAVIYO_METRIC = 'Order Product Followup'
 
+// Testovací režim: když je nastaveno, VŠECHNY followup e-maily se přesměrují na
+// tuto adresu místo skutečného zákazníka (objednávka se přesto vyhodnocuje a
+// označuje jako odeslaná normálně). Před ostrým provozem v Vercel env vars smazat.
+const TEST_EMAIL_OVERRIDE = process.env.FOLLOWUP_TEST_EMAIL_OVERRIDE?.trim() || null
+
 // ── Shopify types ────────────────────────────────────────────────────────────
 
 interface FulfillmentEvent {
@@ -193,6 +198,10 @@ export interface SendFollowupsResult {
 }
 
 export async function sendOrderFollowups(): Promise<SendFollowupsResult> {
+  if (TEST_EMAIL_OVERRIDE) {
+    console.warn(`[followup] TEST MODE — all emails redirected to ${TEST_EMAIL_OVERRIDE}`)
+  }
+
   const since = new Date(Date.now() - ORDER_LOOKBACK_DAYS * 24 * 60 * 60 * 1000).toISOString()
   const searchQuery = `fulfillment_status:fulfilled AND updated_at:>=${since}`
 
@@ -228,7 +237,10 @@ export async function sendOrderFollowups(): Promise<SendFollowupsResult> {
 
         await trackEvent(
           KLAVIYO_METRIC,
-          { email: order.customer.email, first_name: order.customer.firstName ?? undefined },
+          {
+            email: TEST_EMAIL_OVERRIDE ?? order.customer.email,
+            first_name: order.customer.firstName ?? undefined,
+          },
           { order_name: order.name, products }
         )
         await markSent(order.id)
