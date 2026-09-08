@@ -17,7 +17,7 @@ interface DefinitionInput {
   namespace: string
   key: string
   type: string
-  ownerType: 'PRODUCT' | 'ORDER'
+  ownerType: 'PRODUCT' | 'ORDER' | 'CUSTOMER'
   description?: string
 }
 
@@ -71,6 +71,41 @@ const DEFINITIONS: DefinitionInput[] = [
     type: 'date_time',
     ownerType: 'ORDER',
     description: 'Automaticky nastavováno cronem send-order-followups po úspěšném odeslání.',
+  },
+  {
+    name: 'Vyloučit z docházejícího balení',
+    namespace: 'custom',
+    key: 'replenishment_excluded',
+    type: 'boolean',
+    ownerType: 'PRODUCT',
+    description:
+      'true = nikdy neposílat e-mail o docházejícím balení pro tento produkt (např. produkty nevhodné k dlouhodobému užívání).',
+  },
+  {
+    name: 'Docházející balení: stav',
+    namespace: 'custom',
+    key: 'replenishment_status',
+    type: 'json',
+    ownerType: 'ORDER',
+    description:
+      'Pole { product_id, repurchased?, email1_sent_at?, email1_batch_id?, email2_sent_at? } — jeden záznam na položku objednávky, jen jakmile se pro ni něco stane (odeslán e-mail nebo zjištěno, že si zákazník produkt dokoupil sám). Automaticky spravováno cronem send-replenishment-emails.',
+  },
+  {
+    name: 'Docházející balení: souhrn',
+    namespace: 'custom',
+    key: 'replenishment_summary',
+    type: 'single_line_text_field',
+    ownerType: 'ORDER',
+    description: 'Odvozeno z replenishment_status: not_sent / partial / sent / reminder_sent. Pro rychlý přehled v adminu.',
+  },
+  {
+    name: 'Docházející balení: poslední dávka',
+    namespace: 'custom',
+    key: 'replenishment_last_batch_at',
+    type: 'date_time',
+    ownerType: 'CUSTOMER',
+    description:
+      'Kdy byl zákazníkovi naposledy odeslán e-mail o docházejícím balení. Vynucuje limit max 1x za 7 dní.',
   },
 ]
 
