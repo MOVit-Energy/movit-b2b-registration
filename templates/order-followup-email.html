@@ -407,12 +407,6 @@ h4 {
 </tbody>
 </table>
 {% for product in event.products %}
-{% assign card_bg_mod = forloop.index0 | modulo: 2 %}
-{% if card_bg_mod == 1 %}
-{% assign card_bg = 'EBFFDD' %}
-{% else %}
-{% assign card_bg = 'FFF3EA' %}
-{% endif %}
 <table align="center" border="0" cellpadding="0" cellspacing="0" class="kl-section" role="presentation" style="width:100%;">
 <tbody>
 <tr>
@@ -423,9 +417,9 @@ h4 {
 <tbody>
 <tr>
 <td style="direction:ltr;font-size:0px;padding:0px;text-align:center;">
-<!--[if mso | IE]><table role="presentation" border="0" cellpadding="0" cellspacing="0"><table align="center" border="0" cellpadding="0" cellspacing="0" class="" style="width:600px;" width="600" bgcolor="#{{ card_bg }}" ><tr><td style="line-height:0px;font-size:0px;mso-line-height-rule:exactly;"><![endif]-->
-<div style="background:#{{ card_bg }};background-color:#{{ card_bg }};margin:0px auto;border-radius:0px 0px 0px 0px;max-width:600px;">
-<table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#{{ card_bg }};background-color:#{{ card_bg }};width:100%;border-radius:0px 0px 0px 0px;">
+<!--[if mso | IE]><table role="presentation" border="0" cellpadding="0" cellspacing="0"><table align="center" border="0" cellpadding="0" cellspacing="0" class="" style="width:600px;" width="600" bgcolor="#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %}" ><tr><td style="line-height:0px;font-size:0px;mso-line-height-rule:exactly;"><![endif]-->
+<div style="background:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};margin:0px auto;border-radius:0px 0px 0px 0px;max-width:600px;">
+<table align="center" border="0" cellpadding="0" cellspacing="0" role="presentation" style="background:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};width:100%;border-radius:0px 0px 0px 0px;">
 <tbody>
 <tr>
 <td style="direction:ltr;font-size:0px;padding:20px 0;padding-bottom:0px;padding-left:0px;padding-right:0px;padding-top:0px;text-align:center;">
@@ -478,11 +472,11 @@ h4 {
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="width:100%;" width="100%">
 <tbody>
 <tr>
-<td class="" style="background-color:#{{ card_bg }};vertical-align:top;padding-top:0px;padding-right:18px;padding-bottom:0px;padding-left:30px;">
+<td class="" style="background-color:#{% if forloop.parentloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};vertical-align:top;padding-top:0px;padding-right:18px;padding-bottom:0px;padding-left:30px;">
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="" width="100%">
 <tbody>
 <tr>
-<td align="left" class="kl-table" style="background:#{{ card_bg }};font-size:0px;padding:0px;word-break:break-word;">
+<td align="left" class="kl-table" style="background:#{% if forloop.parentloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};font-size:0px;padding:0px;word-break:break-word;">
 <table border="0" cellpadding="0" cellspacing="0" style="color:#000000;font-family:Ubuntu, Helvetica, Arial, sans-serif;font-size:13px;line-height:22px;table-layout:fixed;width:100%;border:none;" width="100%">
 <thead>
 </thead>
@@ -529,7 +523,7 @@ h4 {
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="width:100%;" width="100%">
 <tbody>
 <tr>
-<td class="" style="background-color:#{{ card_bg }};vertical-align:top;padding-top:10px;padding-right:0px;padding-bottom:0px;padding-left:0px;">
+<td class="" style="background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};vertical-align:top;padding-top:10px;padding-right:0px;padding-bottom:0px;padding-left:0px;">
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="" width="100%">
 <tbody>
 <tr>
@@ -633,7 +627,7 @@ h4 {
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="width:100%;" width="100%">
 <tbody>
 <tr>
-<td class="" style="background-color:#{{ card_bg }};vertical-align:top;padding-top:5px;padding-right:30px;padding-bottom:0px;padding-left:30px;">
+<td class="" style="background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};vertical-align:top;padding-top:5px;padding-right:30px;padding-bottom:0px;padding-left:30px;">
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="" width="100%">
 <tbody>
 <tr>
@@ -652,7 +646,7 @@ h4 {
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="width:100%;" width="100%">
 <tbody>
 <tr>
-<td class="" style="background-color:#{{ card_bg }};vertical-align:top;padding-top:0px;padding-right:30px;padding-bottom:{% if product.review_image_url != blank %}9px{% else %}29px{% endif %};padding-left:30px;">
+<td class="" style="background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};vertical-align:top;padding-top:0px;padding-right:30px;padding-bottom:{% if product.review_image_url != blank %}9px{% else %}29px{% endif %};padding-left:30px;">
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="" width="100%">
 <tbody>
 <tr>
@@ -673,7 +667,7 @@ h4 {
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="width:100%;" width="100%">
 <tbody>
 <tr>
-<td class="" style="background-color:#{{ card_bg }};vertical-align:top;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;">
+<td class="" style="background-color:#{% if forloop.counter0|remainder:2 %}EBFFDD{% else %}FFF3EA{% endif %};vertical-align:top;padding-top:0px;padding-right:0px;padding-bottom:0px;padding-left:0px;">
 <table border="0" cellpadding="0" cellspacing="0" role="presentation" style="" width="100%">
 <tbody>
 <tr>
