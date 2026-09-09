@@ -55,7 +55,7 @@ const CANDIDATE_ORDERS_QUERY = `
           followupSent: metafield(namespace: "custom", key: "followup_email_sent_at") { value }
           fulfillments(first: 10) {
             displayStatus
-            events(first: 20, sortKey: CREATED_AT) {
+            events(first: 20, sortKey: HAPPENED_AT) {
               edges { node { status happenedAt } }
             }
           }
