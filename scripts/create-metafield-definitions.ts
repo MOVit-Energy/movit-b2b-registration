@@ -107,6 +107,24 @@ const DEFINITIONS: DefinitionInput[] = [
     description:
       'Kdy byl zákazníkovi naposledy odeslán e-mail o docházejícím balení. Vynucuje limit max 1x za 7 dní.',
   },
+  {
+    name: 'Balíčky s tímto produktem',
+    namespace: 'custom',
+    key: 'bundles',
+    type: 'list.product_reference',
+    ownerType: 'PRODUCT',
+    description:
+      'Balíčky, které produkt obsahují, od nejprodávanějšího (90 dní). Automaticky přepočítáváno týdenním cronem sync-bestsellers — ručně neupravovat.',
+  },
+  {
+    name: 'Komponenty balíčku',
+    namespace: 'custom',
+    key: 'bundle_components',
+    type: 'list.product_reference',
+    ownerType: 'PRODUCT',
+    description:
+      'Produkty v balíčku (ze Shopify Bundles). Téma podle nich kontroluje B2C sklad. Automaticky přepočítáváno cronem sync-bestsellers.',
+  },
 ]
 
 for (const definition of DEFINITIONS) {
