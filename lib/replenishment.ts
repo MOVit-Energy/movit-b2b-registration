@@ -39,13 +39,13 @@ function pragueOffsetMinutes(utcInstant: Date): number {
   return (asIfUtc - utcInstant.getTime()) / 60000
 }
 
-function pragueLocalToUtc(y: number, m: number, d: number, h: number, min: number, s: number): Date {
+export function pragueLocalToUtc(y: number, m: number, d: number, h: number, min: number, s: number): Date {
   const guess = new Date(Date.UTC(y, m - 1, d, h, min, s))
   const offsetMin = pragueOffsetMinutes(guess)
   return new Date(guess.getTime() - offsetMin * 60000)
 }
 
-function todayInPrague(): { y: number; m: number; d: number } {
+export function todayInPrague(): { y: number; m: number; d: number } {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
     year: 'numeric',
@@ -56,7 +56,7 @@ function todayInPrague(): { y: number; m: number; d: number } {
   return { y: +p.year, m: +p.month, d: +p.day }
 }
 
-function formatCzDate(date: Date): string {
+export function formatCzDate(date: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
     year: 'numeric',
@@ -106,7 +106,7 @@ function parseDaysPerUnit(dosageRaw: string | null, packageSizeRaw: string | nul
   return (daysAtMinDosage + daysAtMaxDosage) / 2
 }
 
-function formatPrice(amount: string): string {
+export function formatPrice(amount: string): string {
   const num = Number(amount)
   if (!Number.isFinite(num)) return ''
   return `${num.toLocaleString('cs-CZ', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} Kč`

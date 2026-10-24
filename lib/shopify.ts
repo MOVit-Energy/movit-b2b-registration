@@ -1,14 +1,31 @@
 const SHOPIFY_SHOP = process.env.SHOPIFY_SHOP!
-const SHOPIFY_API_KEY = process.env.SHOPIFY_API_KEY!
-const SHOPIFY_API_SECRET = process.env.SHOPIFY_API_SECRET!
 const API_VERSION = '2026-04'
 
-let cachedToken: string | null = null
-let tokenExpiresAt = 0
+interface AppCredentials {
+  clientId: string
+  clientSecret: string
+}
 
-async function getAccessToken(): Promise<string> {
-  if (cachedToken && Date.now() < tokenExpiresAt - 5 * 60 * 1000) {
-    return cachedToken
+// Hlavní aplikace backendu (zákazníci, firmy, objednávky, produkty…).
+const MAIN_APP: AppCredentials = {
+  clientId: process.env.SHOPIFY_API_KEY!,
+  clientSecret: process.env.SHOPIFY_API_SECRET!,
+}
+
+// Aplikace "Movit extensions" (repo movit-extensions). Slevu nad Shopify Function
+// může přes discountCode*AppCreate založit jen aplikace, které funkce patří, proto
+// slevy chytrého dotazníku zakládáme jejími přístupovými údaji.
+const DISCOUNTS_APP: AppCredentials = {
+  clientId: process.env.SHOPIFY_DISCOUNTS_API_KEY!,
+  clientSecret: process.env.SHOPIFY_DISCOUNTS_API_SECRET!,
+}
+
+const tokenCache = new Map<string, { token: string; expiresAt: number }>()
+
+async function getAccessToken(app: AppCredentials): Promise<string> {
+  const cached = tokenCache.get(app.clientId)
+  if (cached && Date.now() < cached.expiresAt - 5 * 60 * 1000) {
+    return cached.token
   }
 
   const res = await fetch(`https://${SHOPIFY_SHOP}/admin/oauth/access_token`, {
@@ -16,8 +33,8 @@ async function getAccessToken(): Promise<string> {
     headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
       grant_type: 'client_credentials',
-      client_id: SHOPIFY_API_KEY,
-      client_secret: SHOPIFY_API_SECRET,
+      client_id: app.clientId,
+      client_secret: app.clientSecret,
     }),
   })
 
@@ -26,17 +43,13 @@ async function getAccessToken(): Promise<string> {
   }
 
   const data = (await res.json()) as { access_token: string; expires_in: number }
-  cachedToken = data.access_token
-  tokenExpiresAt = Date.now() + data.expires_in * 1000
+  tokenCache.set(app.clientId, { token: data.access_token, expiresAt: Date.now() + data.expires_in * 1000 })
 
-  return cachedToken
+  return data.access_token
 }
 
-export async function shopifyGraphQL<T = unknown>(
-  query: string,
-  variables?: Record<string, unknown>
-): Promise<T> {
-  const token = await getAccessToken()
+async function graphQL<T>(app: AppCredentials, query: string, variables?: Record<string, unknown>): Promise<T> {
+  const token = await getAccessToken(app)
 
   const res = await fetch(
     `https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}/graphql.json`,
@@ -61,6 +74,21 @@ export async function shopifyGraphQL<T = unknown>(
   }
 
   return json.data as T
+}
+
+export async function shopifyGraphQL<T = unknown>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  return graphQL<T>(MAIN_APP, query, variables)
+}
+
+// Admin API jménem aplikace "Movit extensions" — viz DISCOUNTS_APP.
+export async function shopifyDiscountsGraphQL<T = unknown>(
+  query: string,
+  variables?: Record<string, unknown>
+): Promise<T> {
+  return graphQL<T>(DISCOUNTS_APP, query, variables)
 }
 
 // ── Customer helpers ────────────────────────────────────────────────────────
@@ -228,7 +256,7 @@ export async function addTags(resourceId: string, tags: string[], logPrefix: str
 }
 
 export async function shopifyREST<T = unknown>(path: string, options?: RequestInit): Promise<T> {
-  const token = await getAccessToken()
+  const token = await getAccessToken(MAIN_APP)
 
   const res = await fetch(
     `https://${SHOPIFY_SHOP}/admin/api/${API_VERSION}${path}`,
