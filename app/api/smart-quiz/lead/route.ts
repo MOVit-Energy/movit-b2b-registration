@@ -67,7 +67,7 @@ async function maybeIssueDiscount(
   email: string,
   products: z.infer<typeof schema>['products']
 ): Promise<QuizDiscount | null> {
-  if (!products || products.main.length + products.areas.reduce((n, a) => n + a.ids.length, 0) < 2) return null
+  if (!products || products.main.length < 2) return null
   try {
     return await issueQuizDiscount(customerId, email, products)
   } catch (err) {

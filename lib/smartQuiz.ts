@@ -215,7 +215,9 @@ export async function issueQuizDiscount(
     console.error('[smart-quiz] deactivate previous discount failed', err)
   )
 
-  const discount = await createDiscount(allIds, email)
+  // Sleva platí jen na hlavní doporučení ("Doporučujeme právě vám"); seznamy
+  // oblastí jsou v e-mailu jen jako inspirace.
+  const discount = await createDiscount(products.main, email)
   const expiresLabel = formatCzDate(discount.expiresAt)
 
   await setMetafields(

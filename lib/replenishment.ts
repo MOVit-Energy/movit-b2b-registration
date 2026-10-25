@@ -56,15 +56,16 @@ export function todayInPrague(): { y: number; m: number; d: number } {
   return { y: +p.year, m: +p.month, d: +p.day }
 }
 
+// České psaní data: "1. 11. 2026" (bez úvodních nul, s mezerou za tečkou).
 export function formatCzDate(date: Date): string {
   const parts = new Intl.DateTimeFormat('en-CA', {
     timeZone: TIMEZONE,
     year: 'numeric',
-    month: '2-digit',
-    day: '2-digit',
+    month: 'numeric',
+    day: 'numeric',
   }).formatToParts(date)
   const p = Object.fromEntries(parts.map(x => [x.type, x.value]))
-  return `${p.day}.${p.month}.${p.year}`
+  return `${Number(p.day)}. ${Number(p.month)}. ${p.year}`
 }
 
 function computeDiscountExpiresAt(): Date {
