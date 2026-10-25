@@ -81,9 +81,12 @@ type CreateResult = {
   }
 }
 
-async function createDiscount(productIds: string[]): Promise<{ id: string; code: string; expiresAt: Date }> {
+async function createDiscount(productIds: string[], email: string): Promise<{ id: string; code: string; expiresAt: Date }> {
   const expiresAt = computeExpiresAt()
+  // email funkce nepotřebuje — slouží jen pro detail slevy v adminu
+  // (movit-extensions: smart-quiz-settings).
   const config = JSON.stringify({
+    email,
     productIds: productIds.map(toGid),
     tiers: DISCOUNT_TIERS.map(t => ({ count: t.count, percent: t.percent })),
   })
@@ -212,7 +215,7 @@ export async function issueQuizDiscount(
     console.error('[smart-quiz] deactivate previous discount failed', err)
   )
 
-  const discount = await createDiscount(allIds)
+  const discount = await createDiscount(allIds, email)
   const expiresLabel = formatCzDate(discount.expiresAt)
 
   await setMetafields(
