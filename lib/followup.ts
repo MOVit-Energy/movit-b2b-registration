@@ -4,6 +4,7 @@ import { trackEvent } from './klaviyo'
 const ORDER_LOOKBACK_DAYS = Number(process.env.ORDER_LOOKBACK_DAYS || 30)
 const FOLLOWUP_DELAY_HOURS = Number(process.env.FOLLOWUP_DELAY_HOURS || 24)
 const MAX_PRODUCTS = 5
+const MAX_ARTICLES = 3
 const SHOP_URL = (process.env.SHOP_URL || '').replace(/\/+$/, '')
 const KLAVIYO_METRIC = 'Order Product Followup'
 // Tag na objednávce vedle followup_email_sent_at metafieldu — Shopify order
@@ -78,6 +79,18 @@ interface ProductNode {
   usageNote: { value: string } | null
   reviewImageUrl: { value: string } | null
   bestsellerRank: { value: string } | null
+  articles: { references: { nodes: Partial<ArticleNode>[] } | null } | null
+}
+
+interface ArticleNode {
+  id: string
+  title: string
+  handle: string
+  isPublished: boolean
+  summary: string | null
+  body: string | null
+  image: { url: string } | null
+  blog: { handle: string } | null
 }
 
 const PRODUCT_EMAIL_DATA_QUERY = `
@@ -92,6 +105,22 @@ const PRODUCT_EMAIL_DATA_QUERY = `
       usageNote: metafield(namespace: "custom", key: "email_usage_note") { value }
       reviewImageUrl: metafield(namespace: "custom", key: "email_review_image_url") { value }
       bestsellerRank: metafield(namespace: "custom", key: "bestseller_rank_90d") { value }
+      articles: metafield(namespace: "custom", key: "email_articles") {
+        references(first: 50) {
+          nodes {
+            ... on Article {
+              id
+              title
+              handle
+              isPublished
+              summary
+              body
+              image { url }
+              blog { handle }
+            }
+          }
+        }
+      }
     }
   }
 `
@@ -126,13 +155,39 @@ interface EmailProduct {
   review_image_url?: string
 }
 
-// "musí na ně být data v Shopify" — bez podnadpisu produkt do e-mailu nezahrnujeme.
-async function fetchEligibleProduct(productId: string): Promise<{ product: EmailProduct; rank: number } | null> {
+interface EmailArticle {
+  id: string
+  title: string
+  url: string
+  image_url: string
+  excerpt: string
+}
+
+interface ProductData {
+  // null = produkt nemá e-mailová data (podnadpis), do produktové části se nedostane
+  product: EmailProduct | null
+  rank: number
+  // Články se berou i z produktů bez e-mailových dat — jsou to dvě nezávislé sekce.
+  articles: EmailArticle[]
+}
+
+async function fetchProductData(productId: string): Promise<ProductData | null> {
   const { product } = await shopifyGraphQL<{ product: ProductNode | null }>(PRODUCT_EMAIL_DATA_QUERY, {
     id: productId,
   })
   if (!product) return null
 
+  const rank = product.bestsellerRank?.value ? parseInt(product.bestsellerRank.value, 10) : Infinity
+  return {
+    product: toEmailProduct(product),
+    rank: Number.isFinite(rank) ? rank : Infinity,
+    articles: toEmailArticles(product),
+  }
+}
+
+// "musí na ně být data v Shopify" — bez podnadpisu produkt do e-mailu nezahrnujeme.
+function toEmailProduct(product: ProductNode): EmailProduct | null {
+  const productId = product.id
   const subtitle = product.subtitle?.value?.trim()
   if (!subtitle) return null
 
@@ -150,8 +205,6 @@ async function fetchEligibleProduct(productId: string): Promise<{ product: Email
     }
   }
 
-  const rank = product.bestsellerRank?.value ? parseInt(product.bestsellerRank.value, 10) : Infinity
-
   const emailProduct: EmailProduct = {
     name: product.title,
     image_url: product.featuredImage?.url ?? '',
@@ -164,18 +217,142 @@ async function fetchEligibleProduct(productId: string): Promise<{ product: Email
   const reviewImageUrl = product.reviewImageUrl?.value?.trim()
   if (reviewImageUrl) emailProduct.review_image_url = reviewImageUrl
 
-  return { product: emailProduct, rank: Number.isFinite(rank) ? rank : Infinity }
+  return emailProduct
 }
 
-async function buildEmailProducts(order: OrderNode): Promise<EmailProduct[]> {
+// ── Articles ─────────────────────────────────────────────────────────────────
+
+function toEmailArticles(product: ProductNode): EmailArticle[] {
+  const nodes = product.articles?.references?.nodes ?? []
+  const articles: EmailArticle[] = []
+  for (const ref of nodes) {
+    // Reference mimo Article (nemělo by nastat) přijde jako prázdný objekt.
+    if (!ref.id) continue
+    const node = ref as ArticleNode
+    if (!node.isPublished || !node.blog) continue
+    const excerpt = articleExcerpt(node)
+    if (!node.image?.url || !excerpt) {
+      // Bez obrázku nebo textu by blok v e-mailu vypadal rozbitě — radši článek vynecháme.
+      console.warn(`[followup] article ${node.id} skipped (missing image or text)`)
+      continue
+    }
+    articles.push({
+      id: node.id,
+      title: node.title,
+      url: `${SHOP_URL}/blogs/${node.blog.handle}/${node.handle}`,
+      image_url: croppedImageUrl(node.image.url, ARTICLE_IMAGE_WIDTH, ARTICLE_IMAGE_HEIGHT),
+      excerpt,
+    })
+  }
+  return articles
+}
+
+// Obrázek v e-mailu má pevný poměr stran, aby box vypadal u všech článků stejně.
+// Shopify CDN umí ořez přes query parametry (2× kvůli retina displejům).
+const ARTICLE_IMAGE_WIDTH = 480
+const ARTICLE_IMAGE_HEIGHT = 480
+
+function croppedImageUrl(url: string, width: number, height: number): string {
+  try {
+    const u = new URL(url)
+    u.searchParams.set('width', String(width))
+    u.searchParams.set('height', String(height))
+    u.searchParams.set('crop', 'center')
+    return u.toString()
+  } catch {
+    return url
+  }
+}
+
+const EXCERPT_MAX_LENGTH = 220
+
+// "Nadpis, obrázek, první větu brát z toho, jak máme nastavené Shopify":
+// primárně úryvek (summary) článku, jinak první věta z těla článku.
+function articleExcerpt(article: ArticleNode): string {
+  const summary = htmlToText(article.summary ?? '')
+  if (summary) return summary.length <= EXCERPT_MAX_LENGTH ? summary : firstSentence(summary)
+  // Z těla bereme první neprázdný odstavec, ať se k větě nepřilepí nadpis sekce.
+  const body = article.body ?? ''
+  const firstParagraph = [...body.matchAll(/<p\b[^>]*>([\s\S]*?)<\/p>/gi)]
+    .map(m => htmlToText(m[1]))
+    .find(text => text.length > 0)
+  return firstSentence(firstParagraph ?? htmlToText(body))
+}
+
+function firstSentence(text: string): string {
+  const match = text.match(/^.+?[.!?…](?=\s|$)/)
+  const sentence = match ? match[0] : text
+  if (sentence.length <= EXCERPT_MAX_LENGTH) return sentence
+  const cut = sentence.slice(0, EXCERPT_MAX_LENGTH)
+  return cut.slice(0, cut.lastIndexOf(' ')).replace(/[\s,;:–-]+$/, '') + '…'
+}
+
+function htmlToText(html: string): string {
+  return html
+    .replace(/<(br|\/p|\/div|\/h\d|\/li)\b[^>]*>/gi, ' ')
+    .replace(/<[^>]+>/g, '')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;|&apos;/g, "'")
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&#(\d+);/g, (_, code) => String.fromCodePoint(Number(code)))
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function shuffle<T>(items: T[]): T[] {
+  const result = [...items]
+  for (let i = result.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[result[i], result[j]] = [result[j], result[i]]
+  }
+  return result
+}
+
+/**
+ * Náhodný výběr článků s důrazem na pestrost: bereme po jednom článku z každého
+ * produktu (produkty i jejich články v náhodném pořadí), dokud nemáme MAX_ARTICLES.
+ * Má-li objednávka jen jeden produkt, vybereme víc článků od něj. Jeden článek může
+ * být přiřazený více produktům, v e-mailu ale smí být jen jednou.
+ */
+export function pickArticles(articlesPerProduct: EmailArticle[][], max = MAX_ARTICLES): EmailArticle[] {
+  const queues = shuffle(articlesPerProduct.filter(list => list.length > 0)).map(list => shuffle(list))
+  const picked: EmailArticle[] = []
+  const usedIds = new Set<string>()
+
+  while (picked.length < max && queues.some(q => q.length > 0)) {
+    for (const queue of queues) {
+      if (picked.length >= max) break
+      while (queue.length > 0) {
+        const article = queue.shift()!
+        if (usedIds.has(article.id)) continue
+        usedIds.add(article.id)
+        picked.push(article)
+        break
+      }
+    }
+  }
+  return picked
+}
+
+async function buildEmailContent(order: OrderNode): Promise<{ products: EmailProduct[]; articles: EmailArticle[] }> {
   const productIds = [...new Set(order.lineItems.edges.map(e => e.node.product?.id).filter((id): id is string => !!id))]
 
-  const results = await Promise.all(productIds.map(id => fetchEligibleProduct(id)))
-  const eligible = results.filter((r): r is { product: EmailProduct; rank: number } => r !== null)
+  const results = (await Promise.all(productIds.map(id => fetchProductData(id)))).filter(
+    (r): r is ProductData => r !== null
+  )
 
-  eligible.sort((a, b) => a.rank - b.rank)
+  const products = results
+    .filter((r): r is ProductData & { product: EmailProduct } => r.product !== null)
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, MAX_PRODUCTS)
+    .map(r => r.product)
 
-  return eligible.slice(0, MAX_PRODUCTS).map(r => r.product)
+  const articles = pickArticles(results.map(r => r.articles))
+
+  return { products, articles }
 }
 
 async function markSent(orderId: string): Promise<void> {
@@ -231,7 +408,7 @@ export async function sendOrderFollowups(): Promise<SendFollowupsResult> {
         const hoursSinceDelivery = (Date.now() - deliveredAt.getTime()) / (1000 * 60 * 60)
         if (hoursSinceDelivery < FOLLOWUP_DELAY_HOURS) continue
 
-        const products = await buildEmailProducts(order)
+        const { products, articles } = await buildEmailContent(order)
         if (products.length === 0) {
           // Neposíláme, ale ani neoznačujeme jako vyřízené — metafieldy produktu
           // se ještě mohou v rámci lookback okna doplnit a e-mail by měl odejít pak.
@@ -245,7 +422,8 @@ export async function sendOrderFollowups(): Promise<SendFollowupsResult> {
             email: TEST_EMAIL_OVERRIDE ?? order.customer.email,
             first_name: order.customer.firstName ?? undefined,
           },
-          { order_name: order.name, products }
+          // id článku je jen interní pro deduplikaci, do šablony ho neposíláme
+          { order_name: order.name, products, articles: articles.map(({ id: _id, ...article }) => article) }
         )
         await markSent(order.id)
         result.sent++
