@@ -57,6 +57,15 @@ const DEFINITIONS: DefinitionInput[] = [
     description: 'URL obrázku s recenzí. Prázdné = blok se v e-mailu skryje.',
   },
   {
+    name: 'E-mail: Blogové články',
+    namespace: 'custom',
+    key: 'email_articles',
+    type: 'list.article_reference',
+    ownerType: 'PRODUCT',
+    description:
+      'Články k produktu pro poobjednávkový e-mail. Z celé objednávky se náhodně vyberou 3 (pestře napříč produkty, bez duplicit). Nadpis, obrázek a úryvek se berou z článku.',
+  },
+  {
     name: 'Bestseller rank (90 dní)',
     namespace: 'custom',
     key: 'bestseller_rank_90d',
