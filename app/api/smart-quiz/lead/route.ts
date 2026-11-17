@@ -12,7 +12,10 @@ import { issueQuizDiscount, type QuizDiscount } from '@/lib/smartQuiz'
 // Když dotazník pošle i doporučené produkty, vytvoří se uživateli unikátní slevový
 // kód (lib/smartQuiz.ts), vrátí se v odpovědi a přes Klaviyo se pošle e-mailem.
 
-const TAG = 'smart-quiz'
+// Zdroj registrace (stejně jako tagy popupů, např. popup-original). Dostane ho jen
+// zákazník, kterého dotazník opravdu založil — existujícímu zákazníkovi původní
+// zdroj registrace nepřepisujeme.
+const SIGNUP_SOURCE_TAG = 'smart-quiz'
 
 const productId = z.string().regex(/^\d+$/)
 
@@ -31,14 +34,6 @@ const CUSTOMER_CREATE = `
   mutation customerCreate($input: CustomerInput!) {
     customerCreate(input: $input) {
       customer { id }
-      userErrors { field message }
-    }
-  }
-`
-
-const TAGS_ADD = `
-  mutation tagsAdd($id: ID!, $tags: [String!]!) {
-    tagsAdd(id: $id, tags: $tags) {
       userErrors { field message }
     }
   }
@@ -107,7 +102,7 @@ export async function POST(request: NextRequest) {
       }>(CUSTOMER_CREATE, {
         input: {
           email,
-          tags: [TAG],
+          tags: [SIGNUP_SOURCE_TAG],
           ...(consent ? { emailMarketingConsent: subscribedConsent() } : {}),
         },
       })
@@ -118,12 +113,8 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ ok: true, state: 'created', discount })
     }
 
-    // Existující zákazník: jen doplníme tag a případně souhlas. Bez zaškrtnutí
-    // souhlasu jeho dosavadní marketingový stav neměníme (neodhlašujeme ho).
-    const { tagsAdd } = await shopifyGraphQL<{ tagsAdd: UserErrors }>(TAGS_ADD, { id: existing.id, tags: [TAG] })
-    if (tagsAdd.userErrors.length > 0) {
-      console.error('[smart-quiz] tagsAdd userErrors', tagsAdd.userErrors)
-    }
+    // Existující zákazník: tag zdroje registrace nepřidáváme, jen případně souhlas.
+    // Bez zaškrtnutí souhlasu jeho dosavadní marketingový stav neměníme (neodhlašujeme ho).
     if (consent) {
       const { customerEmailMarketingConsentUpdate } = await shopifyGraphQL<{
         customerEmailMarketingConsentUpdate: UserErrors
