@@ -98,7 +98,15 @@ export async function unsubscribeByPhone(phoneE164: string): Promise<{ found: bo
       data: {
         type: 'profile-subscription-bulk-delete-job',
         attributes: {
-          profiles: { data: [{ type: 'profile', attributes: { email } }] },
+          profiles: {
+            data: [
+              {
+                type: 'profile',
+                // Od revize 2025-01-15 je `subscriptions` povinné – říká, jaký souhlas odvolat.
+                attributes: { email, subscriptions: { email: { marketing: { consent: 'UNSUBSCRIBED' } } } },
+              },
+            ],
+          },
         },
         relationships: { list: { data: { type: 'list', id: NEWSLETTER_LIST_ID } } },
       },
