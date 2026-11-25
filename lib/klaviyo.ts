@@ -51,3 +51,62 @@ export async function trackEvent(
     throw new Error(`Klaviyo event "${metricName}" selhal (${res.status}): ${text}`)
   }
 }
+
+// ── Odhlášení z marketingu podle telefonu (odhlašovací stránka) ──────────────
+// Klaviyo nepodporuje SMS marketing pro náš obor, takže máme jen JEDNO odhlášení:
+// zákazník zadá telefon (ze SMS), najdeme profil a odhlásíme ho z e-mail
+// marketingu + odebereme z newsletter listu. SMS publikum se odvozuje z tohoto
+// listu, takže tím zákazník přestane dostávat i SMS.
+const NEWSLETTER_LIST_ID = process.env.KLAVIYO_NEWSLETTER_LIST_ID || 'TV2NX6'
+const API_BASE = 'https://a.klaviyo.com/api'
+
+function klaviyoHeaders() {
+  return {
+    Authorization: `Klaviyo-API-Key ${PRIVATE_KEY}`,
+    revision: REVISION,
+    'Content-Type': 'application/json',
+    accept: 'application/json',
+  }
+}
+
+/** Najde e-mail profilu podle telefonu (E.164). Vrátí null, když profil není. */
+async function findEmailByPhone(phoneE164: string): Promise<string | null> {
+  const filter = encodeURIComponent(`equals(phone_number,"${phoneE164}")`)
+  const res = await fetch(`${API_BASE}/profiles/?filter=${filter}&fields[profile]=email`, {
+    headers: klaviyoHeaders(),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Klaviyo profile lookup selhal (${res.status}): ${text}`)
+  }
+  const json: { data?: Array<{ attributes?: { email?: string | null } }> } = await res.json()
+  return json.data?.[0]?.attributes?.email ?? null
+}
+
+/**
+ * Odhlásí zákazníka podle telefonu z e-mail marketingu a odebere ho z newsletter
+ * listu. Vrací { found }: false, když k číslu neexistuje profil.
+ */
+export async function unsubscribeByPhone(phoneE164: string): Promise<{ found: boolean }> {
+  const email = await findEmailByPhone(phoneE164)
+  if (!email) return { found: false }
+
+  const res = await fetch(`${API_BASE}/profile-subscription-bulk-delete-jobs/`, {
+    method: 'POST',
+    headers: klaviyoHeaders(),
+    body: JSON.stringify({
+      data: {
+        type: 'profile-subscription-bulk-delete-job',
+        attributes: {
+          profiles: { data: [{ type: 'profile', attributes: { email } }] },
+        },
+        relationships: { list: { data: { type: 'list', id: NEWSLETTER_LIST_ID } } },
+      },
+    }),
+  })
+  if (!res.ok) {
+    const text = await res.text().catch(() => '')
+    throw new Error(`Klaviyo unsubscribe selhal (${res.status}): ${text}`)
+  }
+  return { found: true }
+}
