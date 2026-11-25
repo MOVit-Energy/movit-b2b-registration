@@ -65,10 +65,10 @@ export default function OdhlaseniSmsPage() {
         color: '#1a1a1a',
       }}
     >
-      <h1 style={{ color: TEAL, fontSize: 24, marginBottom: 8 }}>Odhlášení z SMS</h1>
+      <h1 style={{ color: TEAL, fontSize: 24, marginBottom: 8 }}>Odhlášení ze zpráv</h1>
       <p style={{ color: '#555', lineHeight: 1.5, marginBottom: 24 }}>
-        Zadejte telefonní číslo, na které vám chodí naše SMS, a odhlásíme vás z jejich
-        zasílání.
+        Zadejte telefonní číslo, na které vám chodí naše SMS, a odhlásíme vás z našich
+        sdělení (e-maily i SMS).
       </p>
 
       {state === 'done' ? (

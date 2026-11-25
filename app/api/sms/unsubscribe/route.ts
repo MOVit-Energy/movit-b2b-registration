@@ -2,11 +2,13 @@ import { NextRequest, NextResponse } from 'next/server'
 import { z } from 'zod'
 import { normalizePhone } from '@/lib/phone'
 import { checkRateLimit } from '@/lib/rateLimit'
-import { unsubscribeSmsByPhone } from '@/lib/klaviyo'
+import { unsubscribeByPhone } from '@/lib/klaviyo'
 
-// Odhlášení z SMS marketingu podle telefonu. Veřejný endpoint (CORS řeší
-// middleware.ts). Telefon se normalizuje na E.164 (ořez mezer/teček/pomlček
-// zajišťuje normalizePhone).
+// Odhlášení podle telefonu. Klaviyo nepodporuje SMS marketing pro náš obor,
+// takže máme jen jedno odhlášení: najdeme profil podle telefonu a odhlásíme ho
+// z e-mail marketingu + odebereme z newsletter listu (tím přestane chodit i SMS).
+// Veřejný endpoint (CORS řeší middleware.ts). Telefon se normalizuje na E.164
+// (ořez mezer/teček/pomlček zajišťuje normalizePhone).
 const schema = z.object({
   phone: z.string().min(1),
 })
@@ -35,11 +37,17 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    await unsubscribeSmsByPhone(phone)
+    const { found } = await unsubscribeByPhone(phone)
+    if (!found) {
+      return NextResponse.json(
+        { error: 'K tomuto číslu jsme nenašli žádný kontakt. Zkontrolujte prosím zadané číslo.' },
+        { status: 404 }
+      )
+    }
   } catch (err) {
     console.error('[sms/unsubscribe]', err)
     return NextResponse.json({ error: 'Odhlášení se nezdařilo, zkuste to prosím později.' }, { status: 500 })
   }
 
-  return NextResponse.json({ ok: true, message: 'Byli jste odhlášeni z odběru SMS.' })
+  return NextResponse.json({ ok: true, message: 'Byli jste odhlášeni z našich sdělení.' })
 }

@@ -11,10 +11,6 @@
     {
       "path": "/api/cron/send-replenishment-emails",
       "schedule": "0 6 * * 0,1,2,3,4"
-    },
-    {
-      "path": "/api/cron/sync-sms-subscriptions",
-      "schedule": "0 4 * * *"
     }
   ]
 }
